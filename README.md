@@ -2,6 +2,8 @@
 
 GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，帮助开发者和企业检查网站是否便于搜索引擎与 AI 系统抓取、理解，并跟踪整改状态。
 
+> **当前阶段：优先验证功能，暂不开发登录认证。** 版本只允许在本地或受控内网运行，不得直接暴露公网。开发要求见 [开发规范](docs/development-guidelines.md)。
+
 ## 项目文档
 
 - [产品方案与路线图](docs/product-overview.md)
@@ -10,6 +12,7 @@ GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，�
 - [数据库设计与 REST API 接口规范 V1.0](docs/database-and-rest-api-spec-v1.0.md)
 - [数据库迁移 SQL 与 OpenAPI 3.1 完整接口定义 V1.0](docs/database-migration-and-openapi-v1.0.md)
 - [开发进度与验证记录](docs/development-status.md)
+- [开发规范](docs/development-guidelines.md)
 - [架构说明](docs/architecture.md)
 - [核心模块说明](core/README.md)
 - [API 快速说明](API.md)
