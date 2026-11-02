@@ -140,7 +140,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><ShieldCheck size={15} className="text-emerald-600" /> 轻量诊断引擎</div>
             <p className="mt-1.5 text-xs leading-5 text-slate-500">基于可验证的页面证据生成整改建议，问题状态会跨扫描保留。</p>
           </div>
-          <div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.2.0</div>
+          <div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.3.0</div>
         </div>
       </aside>
 

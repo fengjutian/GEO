@@ -2,6 +2,33 @@
 
 更新时间：2026-11-02
 
+## 架构重构（v0.3.0）
+
+### 核心模块独立
+
+- 新增独立 Go 模块 `github.com/fengjutian/geopilot-core`，为后续拆分私有包准备。
+- `core/scan`：URL 安全校验、连接级 SSRF 防护、抓取、可插拔规则引擎、评分。
+- `core/report`：与存储无关的 HTML / JSON 报告渲染。
+- 核心模块不依赖 Gin、GORM、MySQL 或应用配置，可独立发布与复用。
+- 新增 `Rule` / `RuleFunc` 扩展点、`scan.WithRules` 与 `Engine.Analyze` 快照复跑能力。
+- 仓库新增 `go.work`，`backend` 通过 `replace` 引用本地 `core`，拆分后只需切换私有模块版本。
+
+### 后端分层
+
+```text
+cmd/server          应用入口、信号处理、HTTP Server
+internal/config     环境变量、.env、CORS
+internal/domain     持久化模型、状态、指纹、版本
+internal/store      MySQL 连接、迁移、回填、仓储
+internal/service    扫描编排、问题生命周期、工作台、报告用例
+internal/httpapi    路由、中间件、请求解析与错误映射
+```
+
+- HTTP 层不再直接依赖 GORM；业务错误通过服务层统一映射。
+- `service.Scanner` 抽象为接口，可替换为队列 worker、浏览器渲染或远程扫描服务。
+- 扫描结果持久化、问题状态传播、自动重开事件保持在同一事务。
+- API 响应结构与原有前端保持兼容。
+
 ## 本轮完成（v0.2.0）
 
 ### 后端
@@ -34,16 +61,17 @@
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端格式与构建 | `gofmt -w *.go && go build ./...` | 通过 |
-| 后端单元测试 | `go test ./...` | 通过 |
-| MySQL API 集成测试 | `TEST_DB_DSN=... go test -run TestAPI -v ./...` | 通过（MySQL 8.0.46） |
-| 前端类型检查与构建 | `npm run build` | 通过 |
-| 真实站点扫描 | `POST /api/sites/1/scans`，目标 `https://example.com` | 成功，7 项问题，评分 42 |
-| TLS 失败场景 | 目标 `https://expired.badssl.com` | 状态 `failed`，错误持久化正确 |
+| 核心模块测试 | `cd core && go test ./...` | 通过 |
+| 后端格式与构建 | `cd backend && go build ./... && go vet ./...` | 通过 |
+| 后端测试 | `cd backend && go test ./...` | 通过（数据库测试自动跳过） |
+| MySQL API 集成测试 | `TEST_DB_DSN=... go test -run TestAPI -v ./internal/httpapi` | 通过（MySQL 8.0.46） |
+| 前端类型检查与构建 | `cd frontend && npm run build` | 通过 |
+| 真实站点扫描 | `POST /api/sites/:id/scans`，目标 `https://example.org` | 成功，7 项问题，评分 42 |
+| TLS 失败场景 | 目标 `https://expired.badssl.com` | 状态 `failed`，`TLS_ERROR` 持久化正确 |
 | 状态生命周期 | 标记 `resolved` 后再次扫描 | 自动重开并生成事件 |
 | 报告转义 | 问题标题含 `<script>` | HTML 报告正确转义 |
 
-说明：上述真实站点扫描与界面截图使用本机临时 MySQL 实例验证；Docker 服务在当前环境未启动，未验证 `docker compose` 路径。
+说明：真实站点扫描与界面验证使用本机临时 MySQL 实例；Docker 服务在当前环境未启动，未验证 `docker compose` 路径。
 
 ## 已知限制
 

@@ -1,33 +1,84 @@
-package main
+// Package report renders GeoPilot audit results without depending on the
+// application's database or HTTP layer. It can be reused by workers, CLIs and
+// future report services.
+package report
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
 	"time"
 )
 
-type ReportSeverityCounts struct {
+type Site struct {
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	URL         string    `json:"url"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type Scan struct {
+	ID           uint       `json:"id"`
+	SiteID       uint       `json:"siteId"`
+	Status       string     `json:"status"`
+	TargetURL    string     `json:"targetUrl"`
+	FinalURL     string     `json:"finalUrl"`
+	HTTPStatus   int        `json:"httpStatus"`
+	Score        int        `json:"score"`
+	Summary      string     `json:"summary"`
+	ErrorCode    string     `json:"errorCode,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	RuleVersion  string     `json:"ruleVersion"`
+	ScoreVersion string     `json:"scoreVersion"`
+	PageCount    int        `json:"pageCount"`
+	StartedAt    time.Time  `json:"startedAt"`
+	FinishedAt   *time.Time `json:"finishedAt"`
+	CreatedAt    time.Time  `json:"createdAt"`
+}
+
+type Finding struct {
+	ID             uint      `json:"id"`
+	SiteID         uint      `json:"siteId"`
+	ScanID         uint      `json:"scanId"`
+	Fingerprint    string    `json:"fingerprint"`
+	Severity       string    `json:"severity"`
+	RuleCode       string    `json:"ruleCode"`
+	Title          string    `json:"title"`
+	URL            string    `json:"url"`
+	Evidence       string    `json:"evidence"`
+	Recommendation string    `json:"recommendation"`
+	ScorePenalty   int       `json:"scorePenalty"`
+	Status         string    `json:"status"`
+	FirstSeenAt    time.Time `json:"firstSeenAt"`
+	LastSeenAt     time.Time `json:"lastSeenAt"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type SeverityCounts struct {
 	Critical int `json:"critical"`
 	High     int `json:"high"`
 	Medium   int `json:"medium"`
 	Low      int `json:"low"`
 }
 
-type ReportDocument struct {
-	FormatVersion  string               `json:"formatVersion"`
-	GeneratedAt    time.Time            `json:"generatedAt"`
-	Site           Site                 `json:"site"`
-	Scan           Scan                 `json:"scan"`
-	SeverityCounts ReportSeverityCounts `json:"severityCounts"`
-	Findings       []Finding            `json:"findings"`
-	Boundary       string               `json:"boundary"`
+type Document struct {
+	FormatVersion  string         `json:"formatVersion"`
+	GeneratedAt    time.Time      `json:"generatedAt"`
+	Site           Site           `json:"site"`
+	Scan           Scan           `json:"scan"`
+	SeverityCounts SeverityCounts `json:"severityCounts"`
+	Findings       []Finding      `json:"findings"`
+	Boundary       string         `json:"boundary"`
 }
 
-const reportBoundary = "本报告由 GeoPilot 的确定性规则引擎生成，只反映扫描时获取到的公开页面信息。它不构成任何 AI 搜索平台收录、排名或引用的保证，也不能替代人工内容与业务审核。"
+const Boundary = "本报告由 GeoPilot 的确定性规则引擎生成，只反映扫描时获取到的公开页面信息。它不构成任何 AI 搜索平台收录、排名或引用的保证，也不能替代人工内容与业务审核。"
 
-func reportSeverityCounts(findings []Finding) ReportSeverityCounts {
-	counts := ReportSeverityCounts{}
+func CountBySeverity(findings []Finding) SeverityCounts {
+	counts := SeverityCounts{}
 	for _, finding := range findings {
 		switch finding.Severity {
 		case "critical":
@@ -43,21 +94,25 @@ func reportSeverityCounts(findings []Finding) ReportSeverityCounts {
 	return counts
 }
 
-func buildReportDocument(site Site, scan Scan, findings []Finding) ReportDocument {
-	return ReportDocument{
+func BuildDocument(site Site, scan Scan, findings []Finding) Document {
+	return Document{
 		FormatVersion:  "1.0",
 		GeneratedAt:    time.Now(),
 		Site:           site,
 		Scan:           scan,
-		SeverityCounts: reportSeverityCounts(findings),
+		SeverityCounts: CountBySeverity(findings),
 		Findings:       findings,
-		Boundary:       reportBoundary,
+		Boundary:       Boundary,
 	}
 }
 
-func renderReport(site Site, scan Scan, findings []Finding) string {
+func MarshalJSON(site Site, scan Scan, findings []Finding) ([]byte, error) {
+	return json.MarshalIndent(BuildDocument(site, scan, findings), "", "  ")
+}
+
+func RenderHTML(site Site, scan Scan, findings []Finding) string {
 	var b strings.Builder
-	counts := reportSeverityCounts(findings)
+	counts := CountBySeverity(findings)
 	finished := scan.FinishedAt
 	if finished == nil || finished.IsZero() {
 		finished = &scan.StartedAt
@@ -68,7 +123,7 @@ func renderReport(site Site, scan Scan, findings []Finding) string {
 	b.WriteString("<h1>GeoPilot 网站诊断报告</h1>")
 	b.WriteString("<p class='muted'>网站：" + html.EscapeString(site.Name) + " · <code>" + html.EscapeString(site.URL) + "</code></p>")
 	b.WriteString("<div class='meta'>")
-	b.WriteString(fmt.Sprintf("<div><b>扫描编号</b>#%d</div><div><b>扫描时间</b>%s</div><div><b>任务状态</b>%s</div><div><b>规则版本</b>%s</div>", scan.ID, html.EscapeString(finished.Local().Format("2006-01-02 15:04:05")), html.EscapeString(scanStatusLabel(scan.Status)), html.EscapeString(scan.RuleVersion)))
+	b.WriteString(fmt.Sprintf("<div><b>扫描编号</b>#%d</div><div><b>扫描时间</b>%s</div><div><b>任务状态</b>%s</div><div><b>规则版本</b>%s</div>", scan.ID, html.EscapeString(finished.Local().Format("2006-01-02 15:04:05")), html.EscapeString(ScanStatusLabel(scan.Status)), html.EscapeString(scan.RuleVersion)))
 	if scan.FinalURL != "" {
 		b.WriteString("<div><b>最终 URL</b><code>" + html.EscapeString(scan.FinalURL) + "</code></div>")
 	}
@@ -87,17 +142,17 @@ func renderReport(site Site, scan Scan, findings []Finding) string {
 		b.WriteString("<p class='muted'>本次扫描未发现规则命中的问题。</p>")
 	}
 	for _, f := range findings {
-		b.WriteString("<section class='finding'><span class='badge " + html.EscapeString(f.Severity) + "'>" + html.EscapeString(severityLabel(f.Severity)) + "</span> <span class='badge'>" + html.EscapeString(issueStatusLabel(f.Status)) + "</span>")
+		b.WriteString("<section class='finding'><span class='badge " + html.EscapeString(f.Severity) + "'>" + html.EscapeString(SeverityLabel(f.Severity)) + "</span> <span class='badge'>" + html.EscapeString(IssueStatusLabel(f.Status)) + "</span>")
 		b.WriteString("<h3>" + html.EscapeString(f.Title) + "</h3>")
 		b.WriteString("<p class='muted'>规则：<code>" + html.EscapeString(f.RuleCode) + "</code> · 扣分：" + fmt.Sprintf("%d", f.ScorePenalty) + " · <code>" + html.EscapeString(f.URL) + "</code></p>")
 		b.WriteString("<p><b>证据</b></p><p class='evidence'>" + html.EscapeString(f.Evidence) + "</p>")
 		b.WriteString("<p><b>整改建议</b></p><p>" + html.EscapeString(f.Recommendation) + "</p></section>")
 	}
-	b.WriteString("<p class='boundary'>" + html.EscapeString(reportBoundary) + "</p></body></html>")
+	b.WriteString("<p class='boundary'>" + html.EscapeString(Boundary) + "</p></body></html>")
 	return b.String()
 }
 
-func severityLabel(severity string) string {
+func SeverityLabel(severity string) string {
 	switch severity {
 	case "critical":
 		return "严重"
@@ -112,28 +167,28 @@ func severityLabel(severity string) string {
 	}
 }
 
-func issueStatusLabel(status string) string {
+func IssueStatusLabel(status string) string {
 	switch status {
-	case IssueStatusOpen:
+	case "open":
 		return "待处理"
-	case IssueStatusInProgress:
+	case "in_progress":
 		return "处理中"
-	case IssueStatusResolved:
+	case "resolved":
 		return "已修复"
-	case IssueStatusIgnored:
+	case "ignored":
 		return "已忽略"
 	default:
 		return status
 	}
 }
 
-func scanStatusLabel(status string) string {
+func ScanStatusLabel(status string) string {
 	switch status {
-	case ScanStatusRunning:
+	case "running":
 		return "扫描中"
-	case ScanStatusCompleted:
+	case "completed":
 		return "已完成"
-	case ScanStatusFailed:
+	case "failed":
 		return "失败"
 	default:
 		return status

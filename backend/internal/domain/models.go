@@ -1,16 +1,8 @@
-package main
+package domain
 
 import "time"
 
 const (
-	// RuleVersion is stored on every scan so reports remain traceable when
-	// the rule set changes. Bump it whenever rule behaviour changes.
-	RuleVersion = "2026.11.1"
-	// ScoreVersion identifies the scoring algorithm. It is intentionally
-	// separate from RuleVersion: adding a rule and changing penalties are
-	// different kinds of changes.
-	ScoreVersion = "v1"
-
 	ScanStatusRunning   = "running"
 	ScanStatusCompleted = "completed"
 	ScanStatusFailed    = "failed"
@@ -20,6 +12,10 @@ const (
 	IssueStatusResolved   = "resolved"
 	IssueStatusIgnored    = "ignored"
 )
+
+func IsActiveIssueStatus(status string) bool {
+	return status == IssueStatusOpen || status == IssueStatusInProgress
+}
 
 type Site struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
@@ -68,8 +64,6 @@ type Finding struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-// IssueEvent records an explicit user-driven status change. Automatic
-// re-opening after a re-scan is recorded too, so the history is auditable.
 type IssueEvent struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	SiteID      uint      `json:"siteId" gorm:"index;not null"`

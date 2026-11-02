@@ -10,6 +10,8 @@ GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，�
 - [数据库设计与 REST API 接口规范 V1.0](docs/database-and-rest-api-spec-v1.0.md)
 - [数据库迁移 SQL 与 OpenAPI 3.1 完整接口定义 V1.0](docs/database-migration-and-openapi-v1.0.md)
 - [开发进度与验证记录](docs/development-status.md)
+- [架构说明](docs/architecture.md)
+- [核心模块说明](core/README.md)
 - [API 快速说明](API.md)
 
 ## 当前能力
@@ -31,7 +33,9 @@ GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，�
 - 前端：React + TypeScript + Vite
 - 数据库：MySQL 8
 - UI：Tailwind CSS + Lucide React
-- 架构：单体应用；不引入 Redis、消息队列或微服务
+- 架构：分层单体应用 + 独立 `geopilot-core` 模块；不引入 Redis、消息队列或微服务
+
+核心扫描与报告逻辑位于独立 Go 模块 [`core`](core/README.md)，不依赖 Gin/GORM，后续可拆分为私有模块 `github.com/fengjutian/geopilot-core`。
 
 ## 启动
 
@@ -49,8 +53,10 @@ docker compose up -d mysql
 cd backend
 cp .env.example .env
 go mod download
-go run .
+go run ./cmd/server
 ```
+
+仓库根目录的 `go.work` 同时组织 `backend` 与 `core` 两个模块；`backend/go.mod` 当前通过 `replace ... => ../core` 使用本地核心模块。拆分为私有仓库后，移除 `replace` 并改用私有模块版本即可。
 
 后端会自动读取 `backend/.env`，默认 API 地址为 `http://localhost:8080`。健康检查：
 
@@ -83,7 +89,20 @@ npm run build
 
 ## 测试
 
-后端单元测试不依赖数据库：
+在仓库根目录可一次运行两个模块：
+
+```bash
+go test ./core/... ./backend/...
+```
+
+核心模块测试不依赖数据库：
+
+```bash
+cd core
+go test ./...
+```
+
+后端测试：
 
 ```bash
 cd backend
@@ -95,12 +114,12 @@ MySQL API 集成测试需要先准备一个**专用空测试库**，再通过 `T
 ```bash
 # PowerShell
 $env:TEST_DB_DSN="geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot_test?charset=utf8mb4&parseTime=True&loc=Local"
-go test -run TestAPI -v ./...
+go test -run TestAPI -v ./internal/httpapi
 ```
 
 ```bash
 # bash
-TEST_DB_DSN='geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot_test?charset=utf8mb4&parseTime=True&loc=Local' go test -run TestAPI -v ./...
+TEST_DB_DSN='geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot_test?charset=utf8mb4&parseTime=True&loc=Local' go test -run TestAPI -v ./internal/httpapi
 ```
 
 前端类型检查与构建：
@@ -113,21 +132,38 @@ npm run build
 ## 目录结构
 
 ```text
+core/                        独立核心模块（未来的私有包）
+  scan/
+    types.go                 页面/规则/结果/评分类型与扩展点
+    target.go                URL 规范化和连接级 SSRF 防护
+    engine.go                抓取、资源加载、规则执行与评分
+    rules.go                 内置诊断规则
+  report/                    HTML / JSON 报告渲染
 backend/
-  main.go        配置、数据库连接、迁移与优雅退出
-  api.go         路由、请求校验、扫描持久化、问题/报告/工作台接口
-  models.go      Site / Scan / Finding / IssueEvent
-  scanner.go     URL 安全校验、连接级 SSRF 防护、HTML 规则引擎
-  report.go      HTML 报告与 JSON 报告结构
-  *_test.go      单元测试与可选 MySQL 集成测试
+  cmd/server/                应用入口与优雅退出
+  internal/config/           环境变量与 .env
+  internal/domain/           Site / Scan / Finding / IssueEvent
+  internal/store/            MySQL 持久化、迁移、回填
+  internal/service/          扫描编排、问题生命周期、工作台、报告
+  internal/httpapi/          路由、中间件、请求/响应
+  internal/httpapi/api_test.go  MySQL 端到端测试
 frontend/
-  src/App.tsx        应用外壳与工作台/详情切换
-  src/Dashboard.tsx  工作台
-  src/SitePage.tsx   诊断概览、问题中心、扫描历史
-  src/api.ts         API 客户端与错误处理
-  src/components.tsx 共享 UI 组件
+  src/App.tsx                应用外壳与工作台/详情切换
+  src/Dashboard.tsx          工作台
+  src/SitePage.tsx           诊断概览、问题中心、扫描历史
+  src/api.ts                 API 客户端与错误处理
+  src/components.tsx         共享 UI 组件
 docs/
+go.work                      后端与 core 模块工作区
 ```
+
+## 扩展方式
+
+- **新增诊断规则**：在 `core/scan` 实现 `Rule` 或使用 `RuleFunc`，通过 `scan.WithRules` 注册；也可复用 `Engine.Analyze` 对快照重跑规则。
+- **替换扫描执行方式**：后端 `service.Scanner` 是接口，可替换为队列消费者、浏览器渲染器或远程扫描服务。
+- **新增 API**：在 `internal/service` 增加用例，在 `internal/httpapi` 增加薄处理器，不直接操作数据库。
+- **替换存储**：`internal/store` 封装 GORM；后续可抽象接口或增加 PostgreSQL 实现。
+- **拆分私有包**：将 `core/` 移至私有仓库，修改模块路径与 `backend` 依赖即可，业务层无需改动。
 
 ## 安全与部署边界
 
