@@ -1,5 +1,13 @@
 # GeoPilot
 
+## 项目文档
+
+- [产品方案与路线图](docs/product-overview.md)
+- [产品需求规格说明书 V1.0](docs/product-requirements-v1.0.md)
+- [功能实现与技术设计文档 V1.0](docs/technical-design-v1.0.md)
+- [数据库设计与 REST API 接口规范 V1.0](docs/database-and-rest-api-spec-v1.0.md)
+- [数据库迁移 SQL 与 OpenAPI 3.1 完整接口定义 V1.0](docs/database-migration-and-openapi-v1.0.md)
+
 GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具的 MVP。
 
 ## 技术栈
