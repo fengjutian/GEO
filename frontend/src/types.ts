@@ -12,8 +12,10 @@ export type Scan = {
   siteId: number;
   status: 'running' | 'completed' | 'failed' | string;
   targetUrl: string;
+  finalUrl: string;
+  httpStatus: number;
   startedAt: string;
-  finishedAt: string;
+  finishedAt: string | null;
   pageCount: number;
   score: number;
   summary: string;

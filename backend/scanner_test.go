@@ -143,7 +143,7 @@ func TestFingerprintFor(t *testing.T) {
 
 func TestRenderReportEscapesExternalContent(t *testing.T) {
 	site := Site{ID: 1, Name: `<script>alert(1)</script>`, URL: `https://example.com/?x="><script>`}
-	scan := Scan{ID: 2, Status: ScanStatusCompleted, Score: 50, Summary: `<img src=x onerror=alert(1)>`, RuleVersion: RuleVersion, FinishedAt: time.Now()}
+	scan := Scan{ID: 2, Status: ScanStatusCompleted, Score: 50, Summary: `<img src=x onerror=alert(1)>`, RuleVersion: RuleVersion, FinishedAt: func() *time.Time { now := time.Now(); return &now }()}
 	findings := []Finding{{Severity: "high", Title: `<svg onload=alert(1)>`, RuleCode: "X", URL: site.URL, Evidence: `</p><script>bad()</script>`, Recommendation: `<b>fix</b>`, Status: IssueStatusOpen, ScorePenalty: 18}}
 	output := renderReport(site, scan, findings)
 	for _, raw := range []string{"<script>alert(1)</script>", "<img src=x", "<svg onload", "</p><script>bad()</script>"} {

@@ -3,4 +3,7 @@ dist/
 .env
 *.log
 .DS_Store
+.tmp/
+*.tsbuildinfo
 backend/geopilot
+backend/*.exe

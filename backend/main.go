@@ -49,7 +49,7 @@ func run() error {
 	if getenv("GIN_MODE", "") == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	router := newRouter(db, allowedOrigins(getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")))
+	router := newRouter(db, allowedOrigins(getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173")))
 	port := getenv("PORT", "8080")
 	server := &http.Server{
 		Addr:              ":" + port,

@@ -62,7 +62,7 @@ type scanComparison struct {
 func newRouter(db *gorm.DB, allowedOrigins map[string]bool) *gin.Engine {
 	api := &API{db: db}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(allowedOrigins), requestIDMiddleware())
+	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(allowedOrigins), requestIDMiddleware(), bodyLimitMiddleware(1<<20))
 	r.GET("/api/health", api.handleHealth)
 	r.GET("/api/dashboard", api.handleDashboard)
 	r.GET("/api/sites", api.handleListSites)
@@ -104,6 +104,15 @@ func requestIDMiddleware() gin.HandlerFunc {
 			id = fmt.Sprintf("req_%d", time.Now().UnixNano())
 		}
 		c.Header("X-Request-ID", id)
+		c.Next()
+	}
+}
+
+func bodyLimitMiddleware(limit int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		}
 		c.Next()
 	}
 }
@@ -204,8 +213,8 @@ func (a *API) handleGetSite(c *gin.Context) {
 	views := make([]scanView, 0, len(scans))
 	for _, scan := range scans {
 		view := scanView{Scan: scan}
-		a.db.Model(&Finding{}).Where("scan_id = ? AND status IN ?", scan.ID, activeIssueStatuses()).Count(&view.IssueCount)
-		a.db.Model(&Finding{}).Where("scan_id = ? AND status IN ? AND severity IN ?", scan.ID, activeIssueStatuses(), []string{"critical", "high"}).Count(&view.HighIssueCount)
+		a.db.Model(&Finding{}).Where("scan_id = ?", scan.ID).Count(&view.IssueCount)
+		a.db.Model(&Finding{}).Where("scan_id = ? AND severity IN ?", scan.ID, []string{"critical", "high"}).Count(&view.HighIssueCount)
 		views = append(views, view)
 	}
 	response := gin.H{"site": site, "scans": views}
@@ -363,7 +372,7 @@ func (a *API) handleCreateScan(c *gin.Context) {
 
 	result := ScanWebsite(site.URL)
 	finished := time.Now()
-	scan.FinishedAt = finished
+	scan.FinishedAt = &finished
 	scan.Status = result.Status
 	if scan.Status == "" {
 		scan.Status = ScanStatusFailed
@@ -372,6 +381,8 @@ func (a *API) handleCreateScan(c *gin.Context) {
 	scan.Summary = result.Summary
 	scan.ErrorCode = result.ErrorCode
 	scan.ErrorMessage = result.ErrorMessage
+	scan.FinalURL = result.FinalURL
+	scan.HTTPStatus = result.HTTPStatus
 	if scan.Status == ScanStatusCompleted {
 		scan.PageCount = 1
 	}
@@ -443,8 +454,10 @@ func persistFindings(tx *gorm.DB, site Site, scanID uint, findings []RuleFinding
 			return nil, err
 		}
 		if reopened {
-			tx.Model(&Finding{}).Where("site_id = ? AND fingerprint = ? AND id <> ?", site.ID, fingerprint, finding.ID).Update("status", IssueStatusOpen)
-			tx.Create(&IssueEvent{
+			if err := tx.Model(&Finding{}).Where("site_id = ? AND fingerprint = ? AND id <> ?", site.ID, fingerprint, finding.ID).Update("status", IssueStatusOpen).Error; err != nil {
+				return nil, err
+			}
+			if err := tx.Create(&IssueEvent{
 				SiteID:      site.ID,
 				FindingID:   finding.ID,
 				Fingerprint: fingerprint,
@@ -452,7 +465,9 @@ func persistFindings(tx *gorm.DB, site Site, scanID uint, findings []RuleFinding
 				FromStatus:  IssueStatusResolved,
 				ToStatus:    IssueStatusOpen,
 				Note:        "重新扫描仍检测到该问题，已自动重新打开。",
-			})
+			}).Error; err != nil {
+				return nil, err
+			}
 		}
 		persisted = append(persisted, finding)
 	}
@@ -757,7 +772,7 @@ func backfillData(db *gorm.DB) {
 	}
 
 	var findings []Finding
-	db.Where("fingerprint = '' OR first_seen_at IS NULL OR last_seen_at IS NULL").Find(&findings)
+	db.Where("fingerprint = '' OR first_seen_at IS NULL OR last_seen_at IS NULL OR score_penalty = 0").Find(&findings)
 	for _, finding := range findings {
 		first := finding.FirstSeenAt
 		if first.IsZero() {
@@ -771,11 +786,16 @@ func backfillData(db *gorm.DB) {
 		if status == "" {
 			status = IssueStatusOpen
 		}
+		penalty := finding.ScorePenalty
+		if penalty == 0 {
+			penalty = penaltyFor(finding.Severity)
+		}
 		db.Model(&Finding{}).Where("id = ?", finding.ID).Updates(map[string]any{
 			"fingerprint":   fingerprintFor(finding.SiteID, finding.URL, finding.RuleCode),
 			"first_seen_at": first,
 			"last_seen_at":  last,
 			"status":        status,
+			"score_penalty": penalty,
 		})
 	}
 }

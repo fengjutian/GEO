@@ -31,20 +31,22 @@ type Site struct {
 }
 
 type Scan struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	SiteID       uint      `json:"siteId" gorm:"index;not null"`
-	Status       string    `json:"status" gorm:"size:32;index"`
-	TargetURL    string    `json:"targetUrl" gorm:"size:2048"`
-	StartedAt    time.Time `json:"startedAt"`
-	FinishedAt   time.Time `json:"finishedAt"`
-	PageCount    int       `json:"pageCount"`
-	Score        int       `json:"score"`
-	Summary      string    `json:"summary" gorm:"type:text"`
-	ErrorCode    string    `json:"errorCode,omitempty" gorm:"size:80"`
-	ErrorMessage string    `json:"errorMessage,omitempty" gorm:"type:text"`
-	RuleVersion  string    `json:"ruleVersion" gorm:"size:32"`
-	ScoreVersion string    `json:"scoreVersion" gorm:"size:32"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	SiteID       uint       `json:"siteId" gorm:"index;not null"`
+	Status       string     `json:"status" gorm:"size:32;index"`
+	TargetURL    string     `json:"targetUrl" gorm:"size:2048"`
+	FinalURL     string     `json:"finalUrl" gorm:"size:2048"`
+	HTTPStatus   int        `json:"httpStatus"`
+	StartedAt    time.Time  `json:"startedAt"`
+	FinishedAt   *time.Time `json:"finishedAt"`
+	PageCount    int        `json:"pageCount"`
+	Score        int        `json:"score"`
+	Summary      string     `json:"summary" gorm:"type:text"`
+	ErrorCode    string     `json:"errorCode,omitempty" gorm:"size:80"`
+	ErrorMessage string     `json:"errorMessage,omitempty" gorm:"type:text"`
+	RuleVersion  string     `json:"ruleVersion" gorm:"size:32"`
+	ScoreVersion string     `json:"scoreVersion" gorm:"size:32"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 type Finding struct {

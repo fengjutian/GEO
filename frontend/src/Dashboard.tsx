@@ -131,6 +131,8 @@ export function Dashboard({
                             <ScoreRing score={scan.score} size={46} />
                             <div className="text-xs text-slate-400">{formatShortDate(scan.finishedAt || scan.startedAt)}</div>
                           </div>
+                        ) : scan ? (
+                          <span className="text-xs font-semibold text-rose-500">扫描失败</span>
                         ) : (
                           <span className="text-slate-400">尚未诊断</span>
                         )}
@@ -142,8 +144,10 @@ export function Dashboard({
                             <div className="font-semibold text-slate-800">{site.openIssues}</div>
                             <div className="mt-0.5 text-[11px] text-slate-400">高优先级 {site.highPriority}</div>
                           </div>
-                        ) : (
+                        ) : site.latestScan?.status === 'completed' ? (
                           <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 size={13} /> 无待办</span>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
                         )}
                       </td>
                       <td className="px-5 py-4">

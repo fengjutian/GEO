@@ -57,6 +57,8 @@ type ScanResult struct {
 	Summary      string
 	ErrorCode    string
 	ErrorMessage string
+	FinalURL     string
+	HTTPStatus   int
 	Findings     []RuleFinding
 }
 
@@ -251,7 +253,7 @@ func ScanWebsite(target string) ScanResult {
 
 	u, err := normalizeTargetURL(target)
 	if err != nil {
-		return failedResult("TARGET_BLOCKED", "网站地址无法安全访问", err.Error())
+		return failedResult(targetErrorCode(err), "网站地址无法安全访问", err.Error())
 	}
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -262,13 +264,18 @@ func ScanWebsite(target string) ScanResult {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return failedResult("HTTP_FETCH_FAILED", "无法抓取网站首页", err.Error())
+		return failedResult(fetchErrorCode(err), "无法抓取网站首页", err.Error())
 	}
 	defer resp.Body.Close()
+	finalURL := resp.Request.URL.String()
+	httpStatus := resp.StatusCode
 
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if readErr != nil {
-		return failedResult("HTTP_FETCH_FAILED", "页面内容读取失败", readErr.Error())
+		result := failedResult("HTTP_FETCH_FAILED", "页面内容读取失败", readErr.Error())
+		result.FinalURL = finalURL
+		result.HTTPStatus = httpStatus
+		return result
 	}
 	findings := []RuleFinding{}
 	add := func(sev, code, title, evidence, rec string) {
@@ -278,8 +285,8 @@ func ScanWebsite(target string) ScanResult {
 		body = body[:maxResponseBytes]
 		add("high", "BODY_LIMIT", "首页内容超过分析上限", fmt.Sprintf("响应体超过 %d KiB，仅分析前 %d KiB。", maxResponseBytes/1024, maxResponseBytes/1024), "精简首页 HTML，并把主要内容保留在首屏文档中。")
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		add("high", "HTTP_STATUS", "首页 HTTP 状态异常", fmt.Sprintf("最终响应为 HTTP %d（%s）", resp.StatusCode, u.String()), "确保首页返回 200；正确配置重定向与错误页面。")
+	if httpStatus < 200 || httpStatus >= 300 {
+		add("high", "HTTP_STATUS", "首页 HTTP 状态异常", fmt.Sprintf("最终响应为 HTTP %d（%s）", httpStatus, finalURL), "确保首页返回 200；正确配置重定向与错误页面。")
 	}
 
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
@@ -293,10 +300,42 @@ func ScanWebsite(target string) ScanResult {
 	sortFindings(findings)
 	score := scoreFindings(findings)
 	return ScanResult{
-		Status:   ScanStatusCompleted,
-		Score:    score,
-		Summary:  summarizeFindings(findings),
-		Findings: findings,
+		Status:     ScanStatusCompleted,
+		Score:      score,
+		Summary:    summarizeFindings(findings),
+		FinalURL:   finalURL,
+		HTTPStatus: httpStatus,
+		Findings:   findings,
+	}
+}
+
+func targetErrorCode(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "cannot be resolved"):
+		return "DNS_RESOLUTION_FAILED"
+	case strings.Contains(message, "only http"), strings.Contains(message, "invalid url"),
+		strings.Contains(message, "must contain a host"), strings.Contains(message, "credentials"),
+		strings.Contains(message, "only ports"), strings.Contains(message, "url is required"):
+		return "URL_INVALID"
+	default:
+		return "TARGET_BLOCKED"
+	}
+}
+
+func fetchErrorCode(err error) string {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "FETCH_TIMEOUT"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "tls"), strings.Contains(message, "x509"), strings.Contains(message, "certificate"):
+		return "TLS_ERROR"
+	case strings.Contains(message, "no such host"), strings.Contains(message, "cannot be resolved"):
+		return "DNS_RESOLUTION_FAILED"
+	default:
+		return "HTTP_FETCH_FAILED"
 	}
 }
 

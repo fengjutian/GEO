@@ -42,6 +42,11 @@ import {
 
 type Tab = 'overview' | 'issues' | 'history';
 
+function tabFromHash(): Tab {
+  const match = window.location.hash.match(/[?&]tab=(overview|issues|history)/);
+  return (match?.[1] as Tab | undefined) ?? 'overview';
+}
+
 export function SitePage({
   siteId,
   onBack,
@@ -59,7 +64,7 @@ export function SitePage({
   const [findings, setFindings] = useState<Finding[]>([]);
   const [latestDetail, setLatestDetail] = useState<ScanDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(() => tabFromHash());
   const [scanning, setScanning] = useState(false);
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -92,11 +97,17 @@ export function SitePage({
 
   useEffect(() => {
     void loadAll(true);
-    setTab('overview');
     setLatestDetail(null);
     setScanModalData(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
+
+  useEffect(() => {
+    const nextHash = `#/sites/${siteId}?tab=${tab}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, '', nextHash);
+    }
+  }, [siteId, tab]);
 
   useEffect(() => {
     if (scanStartedAt === null) return;
@@ -105,7 +116,6 @@ export function SitePage({
     return () => window.clearInterval(timer);
   }, [scanStartedAt]);
 
-  const latestScan = detail?.scans[0];
   const latestCompleted = detail?.scans.find((scan) => scan.status === 'completed');
   const activeFindings = findings.filter((finding) => finding.status === 'open' || finding.status === 'in_progress');
   const highPriority = activeFindings.filter((finding) => finding.severity === 'critical' || finding.severity === 'high');
@@ -273,7 +283,7 @@ export function SitePage({
 
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200">
         <TabButton active={tab === 'overview'} onClick={() => setTab('overview')} icon={<Activity size={15} />} label="诊断概览" />
-        <TabButton active={tab === 'issues'} onClick={() => setTab('issues')} icon={<CircleAlert size={15} />} label="问题清单" count={activeFindings.length} />
+        <TabButton active={tab === 'issues'} onClick={() => setTab('issues')} icon={<CircleAlert size={15} />} label="问题清单" count={findings.length} />
         <TabButton active={tab === 'history'} onClick={() => setTab('history')} icon={<History size={15} />} label="扫描历史" count={scans.length} />
       </div>
 
@@ -743,6 +753,12 @@ function ScanDetailModal({
                   <span className="text-xs text-slate-400">评分算法 {data.scan.scoreVersion || '—'}</span>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{data.scan.summary}</p>
+                {(data.scan.finalUrl || data.scan.httpStatus) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                    {data.scan.httpStatus ? <span className="rounded-md bg-white px-2 py-1 font-semibold text-slate-600">HTTP {data.scan.httpStatus}</span> : null}
+                    {data.scan.finalUrl && <span className="max-w-full truncate">最终 URL {data.scan.finalUrl}</span>}
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <a href={reportUrl(data.scan.id)} target="_blank" rel="noreferrer" className="btn btn-secondary !px-3 !py-2"><FileText size={14} /> HTML 报告</a>
                   <a href={reportJsonUrl(data.scan.id)} className="btn btn-secondary !px-3 !py-2"><FileJson size={14} /> JSON 导出</a>

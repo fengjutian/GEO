@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Activity, ChevronRight, Globe2, LayoutDashboard, Loader2, Plus, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { ChevronRight, Globe2, LayoutDashboard, Plus, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { api } from './api';
 import type { DashboardData, DashboardSite, SiteInput } from './types';
 import { Dashboard } from './Dashboard';
 import { SitePage } from './SitePage';
-import { ScanStatusBadge, SiteFormModal, formatShortDate } from './components';
+import { SiteFormModal } from './components';
 
 function siteIdFromHash(): number | null {
   const match = window.location.hash.match(/^#\/sites\/(\d+)/);
