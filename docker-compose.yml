@@ -1,0 +1,22 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: geopilot-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: change_me_root
+      MYSQL_DATABASE: geopilot
+      MYSQL_USER: geopilot
+      MYSQL_PASSWORD: change_me_geopilot
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - geopilot_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "geopilot", "-pchange_me_geopilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+volumes:
+  geopilot_mysql:
