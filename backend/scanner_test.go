@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -175,5 +177,37 @@ func TestTruncateEvidence(t *testing.T) {
 	}
 	if got := truncateEvidence("123456", 3); got != "123…" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestTargetErrorCode(t *testing.T) {
+	tests := []struct {
+		message string
+		want    string
+	}{
+		{"host cannot be resolved", "DNS_RESOLUTION_FAILED"},
+		{"only http and https URLs are allowed", "URL_INVALID"},
+		{"URL must contain a host and cannot include credentials", "URL_INVALID"},
+		{"private, local, and non-public IP targets are blocked", "TARGET_BLOCKED"},
+	}
+	for _, tt := range tests {
+		if got := targetErrorCode(errors.New(tt.message)); got != tt.want {
+			t.Errorf("targetErrorCode(%q) = %q, want %q", tt.message, got, tt.want)
+		}
+	}
+}
+
+func TestFetchErrorCode(t *testing.T) {
+	if got := fetchErrorCode(context.DeadlineExceeded); got != "FETCH_TIMEOUT" {
+		t.Errorf("deadline should be FETCH_TIMEOUT, got %s", got)
+	}
+	if got := fetchErrorCode(errors.New("tls: failed to verify certificate: x509: certificate has expired")); got != "TLS_ERROR" {
+		t.Errorf("certificate error should be TLS_ERROR, got %s", got)
+	}
+	if got := fetchErrorCode(errors.New("no such host")); got != "DNS_RESOLUTION_FAILED" {
+		t.Errorf("dns error should be DNS_RESOLUTION_FAILED, got %s", got)
+	}
+	if got := fetchErrorCode(errors.New("connection reset")); got != "HTTP_FETCH_FAILED" {
+		t.Errorf("generic error should be HTTP_FETCH_FAILED, got %s", got)
 	}
 }
