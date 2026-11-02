@@ -1,101 +1,154 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func main() {
-	dsn := getenv("DB_DSN", "geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot?charset=utf8mb4&parseTime=True&loc=Local")
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil { log.Fatalf("connect database: %v", err) }
+	loadDotEnv(".env")
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	db, err := openDatabase(getenv("DB_DSN", "geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot?charset=utf8mb4&parseTime=True&loc=Local"))
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
 	sqlDB, err := db.DB()
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
 	sqlDB.SetMaxOpenConns(20)
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
-	if err := db.AutoMigrate(&Site{}, &Scan{} , &Finding{}); err != nil { log.Fatalf("migrate: %v", err) }
 
-	r := gin.Default()
-	r.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "http://localhost:5173")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		if c.Request.Method == "OPTIONS" { c.AbortWithStatus(204); return }
-		c.Next()
-	})
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"status":"ok"}) })
-	r.GET("/api/sites", func(c *gin.Context) {
-		var sites []Site
-		if err := db.Order("created_at desc").Find(&sites).Error; err != nil { c.JSON(500, gin.H{"error":"database error"}); return }
-		c.JSON(200, sites)
-	})
-	r.POST("/api/sites", func(c *gin.Context) {
-		var input struct { Name string `json:"name"`; URL string `json:"url"`; Description string `json:"description"` }
-		if err := c.ShouldBindJSON(&input); err != nil || input.Name == "" || input.URL == "" { c.JSON(400, gin.H{"error":"name and url are required"}); return }
-		normalized, err := normalizeTarget(input.URL)
-		if err != nil { c.JSON(400, gin.H{"error":err.Error()}); return }
-		site := Site{Name: input.Name, URL: normalized, Description: input.Description}
-		if err := db.Create(&site).Error; err != nil { c.JSON(500, gin.H{"error":"could not create site"}); return }
-		c.JSON(201, site)
-	})
-	r.GET("/api/sites/:id", func(c *gin.Context) {
-		var site Site
-		if err := db.First(&site, c.Param("id")).Error; err != nil { c.JSON(404, gin.H{"error":"site not found"}); return }
-		var scans []Scan
-		db.Where("site_id = ?", site.ID).Order("created_at desc").Limit(20).Find(&scans)
-		c.JSON(200, gin.H{"site":site, "scans":scans})
-	})
-	r.DELETE("/api/sites/:id", func(c *gin.Context) {
-		id := c.Param("id")
-		db.Where("site_id = ?", id).Delete(&Finding{})
-		db.Where("site_id = ?", id).Delete(&Scan{})
-		if err := db.Delete(&Site{}, id).Error; err != nil { c.JSON(500, gin.H{"error":"delete failed"}); return }
-		c.Status(204)
-	})
-	r.POST("/api/sites/:id/scans", func(c *gin.Context) {
-		var site Site
-		if err := db.First(&site, c.Param("id")).Error; err != nil { c.JSON(404, gin.H{"error":"site not found"}); return }
-		scan := Scan{SiteID:site.ID, Status:"running", StartedAt:time.Now()}
-		db.Create(&scan)
-		// MVP: synchronous single-page scan. A later version can add bounded background workers.
-		result := ScanWebsite(site.URL)
-		scan.Status = "completed"
-		scan.FinishedAt = time.Now()
-		scan.PageCount = 1
-		scan.Score = result.Score
-		scan.Summary = result.Summary
-		db.Save(&scan)
-		for _, f := range result.Findings {
-			db.Create(&Finding{SiteID:site.ID, ScanID:scan.ID, Severity:f.Severity, RuleCode:f.RuleCode, Title:f.Title, URL:site.URL, Evidence:f.Evidence, Recommendation:f.Recommendation, Status:"open"})
-		}
-		c.JSON(201, gin.H{"scan":scan, "findings":result.Findings})
-	})
-	r.GET("/api/sites/:id/findings", func(c *gin.Context) {
-		var findings []Finding
-		q := db.Where("site_id = ?", c.Param("id"))
-		if status := c.Query("status"); status != "" { q = q.Where("status = ?", status) }
-		if err := q.Order("created_at desc").Find(&findings).Error; err != nil { c.JSON(500, gin.H{"error":"database error"}); return }
-		c.JSON(200, findings)
-	})
-	r.GET("/api/scans/:id/report", func(c *gin.Context) {
-		var scan Scan
-		if err := db.First(&scan, c.Param("id")).Error; err != nil { c.String(404, "Report not found"); return }
-		var site Site
-		db.First(&site, scan.SiteID)
-		var findings []Finding
-		db.Where("scan_id = ?", scan.ID).Order("severity asc").Find(&findings)
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, renderReport(site, scan, findings))
-	})
+	if err := db.AutoMigrate(&Site{}, &Scan{}, &Finding{}, &IssueEvent{}); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	backfillData(db)
+	failInterruptedScans(db)
+
+	if getenv("GIN_MODE", "") == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	router := newRouter(db, allowedOrigins(getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")))
 	port := getenv("PORT", "8080")
-	log.Printf("GeoPilot API listening on :%s", port)
-	log.Fatal(r.Run(":" + port))
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("GeoPilot API listening on :%s", port)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
+	}
 }
 
-func getenv(key, fallback string) string { if v := os.Getenv(key); v != "" { return v }; return fallback }
+func openDatabase(dsn string) (*gorm.DB, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 20; attempt++ {
+		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Warn)})
+		if err == nil {
+			sqlDB, err := db.DB()
+			if err == nil {
+				if pingErr := sqlDB.Ping(); pingErr == nil {
+					return db, nil
+				} else {
+					sqlDB.Close()
+					lastErr = pingErr
+				}
+			} else {
+				lastErr = err
+			}
+		} else {
+			lastErr = err
+		}
+		log.Printf("database not ready (attempt %d/20): %v", attempt, lastErr)
+		time.Sleep(time.Second)
+	}
+	return nil, lastErr
+}
+
+func allowedOrigins(value string) map[string]bool {
+	origins := make(map[string]bool)
+	for _, origin := range strings.Split(value, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			origins[origin] = true
+		}
+	}
+	return origins
+}
+
+func getenv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// loadDotEnv provides a dependency-free way to use the documented .env file.
+// Real environment variables always win over values in the file.
+func loadDotEnv(path string) {
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, value)
+		}
+	}
+}

@@ -307,7 +307,7 @@ func failedResult(code, title, message string) ScanResult {
 		Summary:      "扫描未能完成：" + message,
 		ErrorCode:    code,
 		ErrorMessage: message,
-		Findings: []RuleFinding{newFinding("critical", code, title, message, "确认网站可从公网访问、TLS 证书有效，且目标地址不是本机、内网或云元数据地址。")},
+		Findings:     []RuleFinding{newFinding("critical", code, title, message, "确认网站可从公网访问、TLS 证书有效，且目标地址不是本机、内网或云元数据地址。")},
 	}
 }
 
@@ -356,8 +356,15 @@ func analyzeHTML(body []byte) []RuleFinding {
 func checkResources(client *http.Client, target *url.URL) []RuleFinding {
 	findings := []RuleFinding{}
 	origin := target.Scheme + "://" + target.Host
-	for _, path := range []string{"/robots.txt", "/sitemap.xml"} {
-		checkURL := origin + path
+	resources := []struct {
+		path string
+		code string
+	}{
+		{"/robots.txt", "ROBOTS_UNAVAILABLE"},
+		{"/sitemap.xml", "SITEMAP_UNAVAILABLE"},
+	}
+	for _, resource := range resources {
+		checkURL := origin + resource.path
 		req, err := http.NewRequest(http.MethodGet, checkURL, nil)
 		if err != nil {
 			continue
@@ -366,14 +373,14 @@ func checkResources(client *http.Client, target *url.URL) []RuleFinding {
 		req.Header.Set("Accept", "text/plain,*/*;q=0.8")
 		resp, err := client.Do(req)
 		if err != nil {
-			findings = append(findings, newFinding("low", "RESOURCE_UNAVAILABLE", "站点基础文件无法访问", path+"："+truncateEvidence(err.Error(), 300), "检查该资源是否应该存在，并确保返回正确状态和内容类型。"))
+			findings = append(findings, newFinding("low", resource.code, "站点基础文件无法访问", resource.path+"："+truncateEvidence(err.Error(), 300), "检查该资源是否应该存在，并确保返回正确状态和内容类型。"))
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 		status := resp.StatusCode
 		resp.Body.Close()
 		if status < 200 || status >= 300 {
-			findings = append(findings, newFinding("low", "RESOURCE_UNAVAILABLE", "站点基础文件无法访问", fmt.Sprintf("%s 返回 HTTP %d", path, status), "若站点有可索引页面，建议正确配置 robots.txt 和 sitemap.xml。"))
+			findings = append(findings, newFinding("low", resource.code, "站点基础文件无法访问", fmt.Sprintf("%s 返回 HTTP %d", resource.path, status), "若站点有可索引页面，建议正确配置 robots.txt 和 sitemap.xml。"))
 		}
 	}
 	return findings
