@@ -1,45 +1,199 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Activity, ArrowUpRight, CheckCircle2, ChevronRight, CircleAlert, Clock3, Globe2, LayoutDashboard, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Activity, ChevronRight, Globe2, LayoutDashboard, Loader2, Plus, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { api } from './api';
+import type { DashboardData, DashboardSite, SiteInput } from './types';
+import { Dashboard } from './Dashboard';
+import { SitePage } from './SitePage';
+import { ScanStatusBadge, SiteFormModal, formatShortDate } from './components';
 
-const API = 'http://localhost:8080/api';
-type Site={id:number;name:string;url:string;description:string;createdAt:string};
-type Scan={id:number;siteId:number;status:string;score:number;summary:string;createdAt:string;startedAt:string};
-type Finding={id:number;severity:string;ruleCode:string;title:string;url:string;evidence:string;recommendation:string;status:string};
-type Detail={site:Site;scans:Scan[]};
-const severityLabel:Record<string,string>={critical:'严重',high:'高',medium:'中',low:'低'};
-const severityStyle:Record<string,string>={critical:'bg-red-50 text-red-700',high:'bg-orange-50 text-orange-700',medium:'bg-amber-50 text-amber-700',low:'bg-slate-100 text-slate-600'};
-function App(){
- const [sites,setSites]=useState<Site[]>([]),[selected,setSelected]=useState<number|null>(null),[detail,setDetail]=useState<Detail|null>(null),[findings,setFindings]=useState<Finding[]>([]),[loading,setLoading]=useState(false),[error,setError]=useState(''),[showAdd,setShowAdd]=useState(false),[search,setSearch]=useState(''),[tab,setTab]=useState<'overview'|'issues'>('overview'),[form,setForm]=useState({name:'',url:'',description:''});
- const loadSites=async()=>{try{const r=await fetch(`${API}/sites`);if(!r.ok)throw new Error('API 请求失败');const data=await r.json();setSites(data||[]);if(selected&&!(data||[]).some((s:Site)=>s.id===selected))setSelected(null)}catch(e){setError('无法连接后端。请确认 MySQL 与 Go API 已启动。')}};
- useEffect(()=>{loadSites()},[]);
- useEffect(()=>{if(!selected){setDetail(null);setFindings([]);return}let active=true;(async()=>{try{const [d,f]=await Promise.all([fetch(`${API}/sites/${selected}`),fetch(`${API}/sites/${selected}/findings`)]);if(!d.ok)throw new Error();const dd=await d.json(),ff=await f.json();if(active){setDetail(dd);setFindings(ff||[]);setError('')}}catch{if(active)setError('加载网站详情失败')}})();return()=>{active=false}},[selected]);
- const filtered=useMemo(()=>sites.filter(s=>(s.name+' '+s.url).toLowerCase().includes(search.toLowerCase())),[sites,search]);
- const runScan=async(id:number)=>{setLoading(true);setError('');try{const r=await fetch(`${API}/sites/${id}/scans`,{method:'POST'});const data=await r.json();if(!r.ok)throw new Error(data.error||'扫描失败');setDetail(await (await fetch(`${API}/sites/${id}`)).json());setFindings(await (await fetch(`${API}/sites/${id}/findings`)).json());}catch(e){setError(e instanceof Error?e.message:'扫描失败')}finally{setLoading(false)}};
- const addSite=async(e:React.FormEvent)=>{e.preventDefault();setLoading(true);setError('');try{const r=await fetch(`${API}/sites`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});const data=await r.json();if(!r.ok)throw new Error(data.error||'添加失败');setSites(old=>[data,...old]);setSelected(data.id);setShowAdd(false);setForm({name:'',url:'',description:''})}catch(e){setError(e instanceof Error?e.message:'添加失败')}finally{setLoading(false)}};
- const deleteSite=async(id:number)=>{if(!confirm('确定删除该网站及其诊断历史？'))return;try{await fetch(`${API}/sites/${id}`,{method:'DELETE'});setSites(old=>old.filter(s=>s.id!==id));if(selected===id)setSelected(null)}catch{setError('删除失败')}};
- const allScans=detail?.scans||[];const latest=allScans[0];const critical=findings.filter(f=>f.severity==='critical'||f.severity==='high').length;
- return <div className="min-h-screen bg-slate-50">
-  <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-   <div className="flex h-[76px] items-center gap-3 border-b border-slate-100 px-6"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><Sparkles size={19}/></div><div><div className="text-[17px] font-bold tracking-tight">GeoPilot</div><div className="text-[11px] text-slate-400">GEO SITE INTELLIGENCE</div></div></div>
-   <div className="px-4 pt-6"><div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[.13em] text-slate-400">工作空间</div><button onClick={()=>{setSelected(null);setTab('overview')}} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold ${!selected?'bg-indigo-50 text-indigo-700':'text-slate-600 hover:bg-slate-50'}`}><LayoutDashboard size={17}/>总览</button><button onClick={()=>setShowAdd(true)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Globe2 size={17}/>网站管理<span className="ml-auto rounded-md bg-slate-100 px-2 py-0.5 text-xs">{sites.length}</span></button><button onClick={()=>setTab('issues')} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold ${tab==='issues'?'bg-indigo-50 text-indigo-700':'text-slate-600 hover:bg-slate-50'}`}><CircleAlert size={17}/>问题中心</button></div>
-   <div className="mt-auto border-t border-slate-100 p-5"><div className="rounded-xl bg-slate-50 p-3"><div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><ShieldCheck size={15} className="text-emerald-600"/>轻量诊断引擎</div><p className="mt-1.5 text-xs leading-5 text-slate-500">基于可验证的页面证据生成整改建议。</p></div><div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.1.0</div></div>
-  </aside>
-  <main className="lg:pl-64"><header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-slate-200/80 bg-white/90 px-5 backdrop-blur md:px-9"><div><div className="text-xs text-slate-400">工作空间 <ChevronRight size={12} className="mx-1 inline"/> {selected?detail?.site.name||'网站详情':'总览'}</div><div className="mt-1 text-lg font-bold">{selected?'网站诊断':'网站诊断工作台'}</div></div><div className="flex items-center gap-2"><span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:flex"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/>本地工作区</span><button onClick={()=>setShowAdd(true)} className="btn btn-primary"><Plus size={16}/>添加网站</button></div></header>
-  <div className="mx-auto max-w-[1440px] p-5 md:p-9">
-   {error&&<div className="mb-5 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><span>{error}</span><button onClick={()=>setError('')}><X size={16}/></button></div>}
-   {!selected?<><div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700"><Sparkles size={13}/> GEO 技术诊断</div><h1 className="text-3xl font-bold tracking-tight text-slate-900">让网站更容易被理解</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">检查网站结构、页面元数据与机器可读性，优先处理有证据的问题。</p></div><button onClick={()=>setShowAdd(true)} className="btn btn-primary self-start md:self-auto"><Plus size={16}/>添加第一个网站</button></div>
-   <div className="mb-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat icon={<Globe2 size={18}/>} label="管理的网站" value={sites.length} hint="已添加到工作空间" color="indigo"/><Stat icon={<Activity size={18}/>} label="已完成扫描" value={sites.reduce((n,s)=>n,0)===0?sites.length&&0:0} hint="扫描后自动累计" color="blue"/><Stat icon={<CircleAlert size={18}/>} label="待处理问题" value="—" hint="选择网站查看问题" color="amber"/><Stat icon={<CheckCircle2 size={18}/>} label="监测状态" value="就绪" hint="等待手动启动扫描" color="green"/></div>
-   <div className="panel overflow-hidden"><div className="flex flex-col gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-bold">我的网站</h2><p className="mt-1 text-xs text-slate-500">管理目标站点并查看最近诊断状态</p></div><div className="relative w-full sm:w-72"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索网站名称或域名" className="field pl-9"/></div></div>
-   {filtered.length===0?<div className="flex flex-col items-center px-5 py-16 text-center"><div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><Globe2 size={25}/></div><h3 className="font-semibold">{sites.length?'没有找到匹配的网站':'还没有添加网站'}</h3><p className="mt-2 max-w-sm text-sm text-slate-500">添加一个公开可访问的网站，即可运行第一轮 GEO 技术诊断。</p><button onClick={()=>setShowAdd(true)} className="btn btn-primary mt-5"><Plus size={16}/>添加网站</button></div>:<div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-slate-50/80 text-xs text-slate-500"><tr><th className="px-5 py-3 font-semibold">网站</th><th className="px-5 py-3 font-semibold">最近诊断</th><th className="px-5 py-3 font-semibold">状态</th><th className="px-5 py-3 text-right font-semibold">操作</th></tr></thead><tbody>{filtered.map(s=><tr key={s.id} className="table-row hover:bg-slate-50/70"><td className="px-5 py-4"><button onClick={()=>setSelected(s.id)} className="flex items-center gap-3 text-left"><div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-100 bg-white text-indigo-600"><Globe2 size={18}/></div><span><span className="block font-semibold text-slate-800">{s.name}</span><span className="mt-1 block max-w-[360px] truncate text-xs text-slate-500">{s.url}</span></span></button></td><td className="px-5 py-4 text-slate-500">尚未诊断</td><td className="px-5 py-4"><span className="pill bg-slate-100 text-slate-600">待扫描</span></td><td className="px-5 py-4"><div className="flex justify-end gap-2"><button onClick={()=>runScan(s.id)} disabled={loading} className="btn btn-secondary !px-3 !py-2"><Activity size={14}/>诊断</button><button onClick={()=>setSelected(s.id)} className="btn btn-secondary !px-3 !py-2">详情<ArrowUpRight size={14}/></button><button onClick={()=>deleteSite(s.id)} className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600" title="删除网站"><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
-   </div><div className="mt-5 flex items-start gap-2 text-xs leading-5 text-slate-400"><ShieldCheck size={15} className="mt-0.5 shrink-0"/>诊断结果来自规则检查，主要帮助发现技术与内容可读性问题，不保证特定 AI 平台收录或引用。</div>
-   </>:<><div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><button onClick={()=>setSelected(null)} className="mb-3 text-xs font-semibold text-indigo-600 hover:text-indigo-800">← 返回网站列表</button><h1 className="text-2xl font-bold">{detail?.site.name||'网站详情'}</h1><a href={detail?.site.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-indigo-600">{detail?.site.url}<ArrowUpRight size={13}/></a></div><div className="flex gap-2"><button disabled={loading} onClick={()=>runScan(selected)} className="btn btn-primary"><RefreshCw size={15} className={loading?'animate-spin':''}/>{loading?'扫描中…':'运行诊断'}</button>{latest&&<a className="btn btn-secondary" href={`${API}/scans/${latest.id}/report`} target="_blank" rel="noreferrer">查看 HTML 报告<ArrowUpRight size={14}/></a>}</div></div>
-   <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat icon={<Activity size={18}/>} label="最近评分" value={latest?`${latest.score}/100`:'—'} hint={latest?'GeoPilot 规则评分':'运行扫描后生成'} color="indigo"/><Stat icon={<CircleAlert size={18}/>} label="发现问题" value={findings.length} hint="当前网站的累计问题记录" color="amber"/><Stat icon={<ShieldCheck size={18}/>} label="高优先级" value={critical} hint="严重与高优先级问题" color="red"/><Stat icon={<Clock3 size={18}/>} label="扫描记录" value={allScans.length} hint="保留最近 20 次扫描" color="blue"/></div>
-   <div className="mb-5 flex gap-1 border-b border-slate-200"><button onClick={()=>setTab('overview')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${tab==='overview'?'border-indigo-600 text-indigo-700':'border-transparent text-slate-500'}`}>诊断概览</button><button onClick={()=>setTab('issues')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${tab==='issues'?'border-indigo-600 text-indigo-700':'border-transparent text-slate-500'}`}>问题清单 <span className="ml-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-xs">{findings.length}</span></button></div>
-   {tab==='overview'?<div className="grid gap-5 xl:grid-cols-[1.3fr_1fr]"><section className="panel p-5"><div className="flex items-center justify-between"><div><h2 className="font-bold">最近扫描</h2><p className="mt-1 text-xs text-slate-500">每次扫描保留独立记录</p></div><Activity size={18} className="text-slate-400"/></div>{allScans.length===0?<Empty text="尚无扫描记录" sub="点击“运行诊断”检查网站首页。"/>:<div className="mt-4 space-y-3">{allScans.map(s=><div key={s.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3"><div><div className="font-semibold">扫描 #{s.id}</div><div className="mt-1 text-xs text-slate-500">{new Date(s.createdAt||s.startedAt).toLocaleString()}</div></div><div className="text-right"><div className="text-lg font-bold">{s.score}<span className="text-xs font-normal text-slate-400">/100</span></div><div className="text-xs text-slate-500">{s.status==='completed'?'已完成':s.status}</div></div></div>)}</div>}</section><section className="panel p-5"><h2 className="font-bold">优先整改</h2><p className="mt-1 text-xs text-slate-500">先处理影响抓取与理解的问题</p>{findings.filter(f=>f.severity==='critical'||f.severity==='high').length===0?<Empty text="暂无高优先级问题" sub="完成扫描后，这里会显示优先处理项。"/>:<div className="mt-4 space-y-3">{findings.filter(f=>f.severity==='critical'||f.severity==='high').slice(0,5).map(f=><div key={f.id} className="flex gap-3 rounded-xl bg-slate-50 p-3"><CircleAlert size={17} className="mt-0.5 shrink-0 text-orange-500"/><div><div className="text-sm font-semibold">{f.title}</div><div className="mt-1 text-xs leading-5 text-slate-500">{f.recommendation}</div></div></div>)}</div>}</section></div>:<section className="panel overflow-hidden"><div className="border-b border-slate-100 p-5"><h2 className="font-bold">诊断问题</h2><p className="mt-1 text-xs text-slate-500">每个问题包含规则、证据与建议，便于复核与整改。</p></div>{findings.length===0?<Empty text="没有问题记录" sub="运行一次诊断以生成问题清单。"/>:<div className="divide-y divide-slate-100">{findings.map(f=><div key={f.id} className="p-5"><div className="flex flex-wrap items-center gap-2"><span className={`pill ${severityStyle[f.severity]||severityStyle.low}`}>{severityLabel[f.severity]||f.severity}</span><span className="text-[11px] font-mono text-slate-400">{f.ruleCode}</span></div><h3 className="mt-2 font-semibold">{f.title}</h3><p className="mt-2 text-sm leading-6 text-slate-600"><b>证据：</b>{f.evidence}</p><p className="mt-1 text-sm leading-6 text-slate-600"><b>建议：</b>{f.recommendation}</p><p className="mt-2 break-all text-xs text-slate-400">{f.url}</p></div>)}</div>}</section>}</>}
-  </div></main>
-  {showAdd&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-[2px]" onMouseDown={e=>{if(e.target===e.currentTarget)setShowAdd(false)}}><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-bold">添加网站</h2><p className="mt-1 text-sm text-slate-500">添加可公开访问的网站作为诊断目标。</p></div><button onClick={()=>setShowAdd(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18}/></button></div><form onSubmit={addSite} className="space-y-4"><div><label className="label">网站名称 *</label><input required className="field" placeholder="例如：公司官网" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></div><div><label className="label">网站地址 *</label><input required className="field" placeholder="https://example.com" value={form.url} onChange={e=>setForm({...form,url:e.target.value})}/><p className="mt-1.5 text-xs text-slate-400">仅支持 HTTP/HTTPS；本机和内网地址会被拦截。</p></div><div><label className="label">备注（可选）</label><textarea className="field min-h-20 resize-y" placeholder="网站用途、业务说明…" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></div><div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={()=>setShowAdd(false)} className="btn btn-secondary">取消</button><button disabled={loading} className="btn btn-primary">{loading?'提交中…':'创建网站'}</button></div></form></div></div>}
- </div>
+function siteIdFromHash(): number | null {
+  const match = window.location.hash.match(/^#\/sites\/(\d+)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
-function Stat({icon,label,value,hint,color}:{icon:React.ReactNode;label:string;value:React.ReactNode;hint:string;color:string}){const c:Record<string,string>={indigo:'bg-indigo-50 text-indigo-600',blue:'bg-sky-50 text-sky-600',amber:'bg-amber-50 text-amber-600',green:'bg-emerald-50 text-emerald-600',red:'bg-rose-50 text-rose-600'};return <div className="panel p-5"><div className="flex items-center justify-between"><span className="text-sm text-slate-500">{label}</span><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${c[color]||c.indigo}`}>{icon}</span></div><div className="mt-4 text-2xl font-bold tracking-tight">{value}</div><div className="mt-1 text-xs text-slate-400">{hint}</div></div>}
-function Empty({text,sub}:{text:string;sub:string}){return <div className="flex flex-col items-center py-12 text-center"><div className="mb-3 rounded-xl bg-slate-100 p-3 text-slate-400"><Activity size={20}/></div><div className="text-sm font-semibold text-slate-700">{text}</div><div className="mt-1 text-xs text-slate-400">{sub}</div></div>}
-export default App;
+
+export default function App() {
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(() => siteIdFromHash());
+  const [showAdd, setShowAdd] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState('');
+  const [scanningSiteId, setScanningSiteId] = useState<number | null>(null);
+
+  const loadDashboard = async (showSpinner = true) => {
+    if (showSpinner) setLoadingDashboard(true);
+    try {
+      setDashboard(await api.dashboard());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法加载工作台数据');
+    } finally {
+      if (showSpinner) setLoadingDashboard(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadDashboard();
+  }, []);
+
+  useEffect(() => {
+    const onHashChange = () => setSelectedSiteId(siteIdFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(''), 10000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
+  const navigate = (siteId: number | null) => {
+    setSelectedSiteId(siteId);
+    window.location.hash = siteId ? `#/sites/${siteId}` : '#/';
+  };
+
+  const addSite = async (input: SiteInput) => {
+    setAdding(true);
+    try {
+      const site = await api.createSite(input);
+      await loadDashboard(false);
+      setShowAdd(false);
+      navigate(site.id);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const runScan = async (site: DashboardSite) => {
+    setScanningSiteId(site.id);
+    setError('');
+    try {
+      const result = await api.runScan(site.id);
+      await loadDashboard(false);
+      if (result.scan.status === 'failed') {
+        setError(`扫描未完成：${result.scan.errorMessage || '目标网站无法访问'}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '扫描失败');
+    } finally {
+      setScanningSiteId(null);
+    }
+  };
+
+  const deleteSite = async (site: DashboardSite) => {
+    if (!window.confirm(`确定删除「${site.name}」及其全部扫描记录、问题与状态历史？此操作不可撤销。`)) return;
+    setError('');
+    try {
+      await api.deleteSite(site.id);
+      if (selectedSiteId === site.id) navigate(null);
+      await loadDashboard(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除网站失败');
+    }
+  };
+
+  const selectedSite = dashboard?.sites.find((site) => site.id === selectedSiteId);
+  const pageTitle = selectedSiteId ? '网站诊断' : '网站诊断工作台';
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
+        <div className="flex h-[76px] items-center gap-3 border-b border-slate-100 px-6">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><Sparkles size={19} /></div>
+          <div>
+            <div className="text-[17px] font-bold tracking-tight">GeoPilot</div>
+            <div className="text-[11px] text-slate-400">GEO SITE INTELLIGENCE</div>
+          </div>
+        </div>
+        <div className="px-4 pt-6">
+          <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[.13em] text-slate-400">工作空间</div>
+          <button onClick={() => navigate(null)} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold ${!selectedSiteId ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+            <LayoutDashboard size={17} /> 总览
+          </button>
+          <button onClick={() => setShowAdd(true)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+            <Globe2 size={17} /> 添加网站 <span className="ml-auto rounded-md bg-slate-100 px-2 py-0.5 text-xs">{dashboard?.stats.siteCount ?? 0}</span>
+          </button>
+        </div>
+        <div className="mt-6 flex-1 overflow-y-auto px-4">
+          <div className="flex items-center justify-between px-3 pb-2">
+            <span className="text-[11px] font-bold uppercase tracking-[.13em] text-slate-400">我的网站</span>
+            <button onClick={() => setShowAdd(true)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600" title="添加网站"><Plus size={14} /></button>
+          </div>
+          {dashboard?.sites.length ? (
+            <div className="space-y-1">
+              {dashboard.sites.slice(0, 8).map((site) => (
+                <button key={site.id} onClick={() => navigate(site.id)} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition ${selectedSiteId === site.id ? 'bg-slate-100 font-semibold text-slate-900' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${site.latestScan?.status === 'failed' ? 'bg-rose-500' : site.latestScan?.status === 'completed' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                  <span className="min-w-0 flex-1 truncate">{site.name}</span>
+                  {site.latestScan?.status === 'completed' && <span className="text-[11px] font-semibold text-slate-400">{site.latestScan.score}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="px-3 text-xs leading-5 text-slate-400">还没有网站。添加第一个目标后，这里会显示快捷入口。</p>
+          )}
+        </div>
+        <div className="border-t border-slate-100 p-5">
+          <div className="rounded-xl bg-slate-50 p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><ShieldCheck size={15} className="text-emerald-600" /> 轻量诊断引擎</div>
+            <p className="mt-1.5 text-xs leading-5 text-slate-500">基于可验证的页面证据生成整改建议，问题状态会跨扫描保留。</p>
+          </div>
+          <div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.2.0</div>
+        </div>
+      </aside>
+
+      <main className="lg:pl-64">
+        <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-slate-200/80 bg-white/90 px-5 backdrop-blur md:px-9">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 text-xs text-slate-400">
+              <button onClick={() => navigate(null)} className="hover:text-indigo-600">工作空间</button>
+              <ChevronRight size={12} />
+              <span className="truncate">{selectedSiteId ? selectedSite?.name || '网站详情' : '总览'}</span>
+            </div>
+            <div className="mt-1 text-lg font-bold">{pageTitle}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 本地工作区
+            </span>
+            <button onClick={() => setShowAdd(true)} className="btn btn-primary"><Plus size={16} /> 添加网站</button>
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-[1440px] p-5 md:p-9">
+          {error && (
+            <div className="mb-5 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <span className="leading-6">{error}</span>
+              <button onClick={() => setError('')} className="mt-0.5 shrink-0 rounded p-1 hover:bg-amber-100" aria-label="关闭提示"><X size={16} /></button>
+            </div>
+          )}
+
+          {selectedSiteId ? (
+            <SitePage
+              key={selectedSiteId}
+              siteId={selectedSiteId}
+              onBack={() => navigate(null)}
+              onError={setError}
+              onChanged={() => void loadDashboard(false)}
+              onDeleted={() => { navigate(null); void loadDashboard(false); }}
+            />
+          ) : (
+            <Dashboard
+              data={dashboard}
+              loading={loadingDashboard}
+              scanningSiteId={scanningSiteId}
+              onAdd={() => setShowAdd(true)}
+              onOpenSite={navigate}
+              onRunScan={runScan}
+              onDeleteSite={deleteSite}
+            />
+          )}
+        </div>
+      </main>
+
+      {showAdd && <SiteFormModal submitting={adding} onClose={() => setShowAdd(false)} onSubmit={addSite} />}
+    </div>
+  );
+}
