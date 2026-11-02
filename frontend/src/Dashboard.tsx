@@ -129,10 +129,12 @@ export function Dashboard({
                         {scan?.status === 'completed' ? (
                           <div className="flex items-center gap-3">
                             <ScoreRing score={scan.score} size={46} />
-                            <div className="text-xs text-slate-400">{formatShortDate(scan.finishedAt || scan.startedAt)}</div>
+                            <div className="text-xs text-slate-400">{formatShortDate(scan.finishedAt || scan.startedAt || scan.createdAt)}</div>
                           </div>
                         ) : scan ? (
-                          <span className="text-xs font-semibold text-rose-500">扫描失败</span>
+                          <span className={`text-xs font-semibold ${scan.status === 'failed' ? 'text-rose-500' : scan.status === 'queued' ? 'text-amber-600' : 'text-sky-600'}`}>
+                            {scan.status === 'failed' ? '扫描失败' : scan.status === 'queued' ? '等待执行' : '扫描中'}
+                          </span>
                         ) : (
                           <span className="text-slate-400">尚未诊断</span>
                         )}
@@ -152,9 +154,13 @@ export function Dashboard({
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => onRunScan(site)} disabled={scanningSiteId === site.id} className="btn btn-secondary !px-3 !py-2">
-                            {scanningSiteId === site.id ? <RefreshCw size={14} className="animate-spin" /> : <Activity size={14} />}
-                            {scanningSiteId === site.id ? '扫描中' : '诊断'}
+                          <button
+                            onClick={() => onRunScan(site)}
+                            disabled={scanningSiteId === site.id || scan?.status === 'queued' || scan?.status === 'running'}
+                            className="btn btn-secondary !px-3 !py-2"
+                          >
+                            {scanningSiteId === site.id || scan?.status === 'queued' || scan?.status === 'running' ? <RefreshCw size={14} className="animate-spin" /> : <Activity size={14} />}
+                            {scanningSiteId === site.id || scan?.status === 'running' ? '扫描中' : scan?.status === 'queued' ? '排队中' : '诊断'}
                           </button>
                           <button onClick={() => onOpenSite(site.id)} className="btn btn-secondary !px-3 !py-2">详情 <ArrowUpRight size={14} /></button>
                           <button onClick={() => onDeleteSite(site)} className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600" title="删除网站"><Trash2 size={15} /></button>
@@ -186,7 +192,7 @@ export function Dashboard({
                 <button key={scan.id} onClick={() => onOpenSite(scan.siteId)} className="flex w-full items-center justify-between gap-3 py-3 text-left transition hover:opacity-80">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-slate-800">{scan.siteName}</div>
-                    <div className="mt-1 text-xs text-slate-400">{formatDate(scan.finishedAt || scan.startedAt)} · 扫描 #{scan.id}</div>
+                    <div className="mt-1 text-xs text-slate-400">{formatDate(scan.finishedAt || scan.startedAt || scan.createdAt)} · 扫描 #{scan.id}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     {scan.status === 'completed' && <span className="text-sm font-bold text-slate-700">{scan.score}<span className="text-[10px] font-normal text-slate-400">/100</span></span>}

@@ -18,6 +18,7 @@ import (
 	"github.com/fengjutian/GEO/backend/internal/httpapi"
 	"github.com/fengjutian/GEO/backend/internal/service"
 	"github.com/fengjutian/GEO/backend/internal/store"
+	"github.com/fengjutian/GEO/backend/internal/worker"
 )
 
 func main() {
@@ -48,6 +49,12 @@ func run() error {
 	scanner := corescan.New()
 	svc := service.New(st, scanner)
 	router := httpapi.NewRouter(svc, cfg.AllowedOrigin)
+	scanWorker := worker.New(svc, st, 2, 750*time.Millisecond)
+	workerDone := make(chan struct{})
+	go func() {
+		scanWorker.Run(ctx)
+		close(workerDone)
+	}()
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           router,
@@ -67,10 +74,15 @@ func run() error {
 
 	select {
 	case err := <-errCh:
+		stop()
+		<-workerDone
 		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return server.Shutdown(shutdownCtx)
+		err := server.Shutdown(shutdownCtx)
+		stop()
+		<-workerDone
+		return err
 	}
 }

@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/fengjutian/GEO/backend/internal/domain"
 )
@@ -31,12 +33,59 @@ func (s *Store) CreateScan(ctx context.Context, scan *domain.Scan) error {
 	return s.db.WithContext(ctx).Create(scan).Error
 }
 
-func (s *Store) CountRunningScans(ctx context.Context, siteID uint, since time.Time) (int64, error) {
-	var count int64
-	err := s.db.WithContext(ctx).Model(&domain.Scan{}).
-		Where("site_id = ? AND status = ? AND started_at > ?", siteID, domain.ScanStatusRunning, since).
-		Count(&count).Error
-	return count, err
+// CreateScanIfIdle serialises enqueue attempts for one site and guarantees at
+// most one queued/running scan. Locking the site row closes the count-then-
+// insert race between concurrent requests.
+func (s *Store) CreateScanIfIdle(ctx context.Context, scan *domain.Scan) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var site domain.Site
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&site, scan.SiteID).Error; err != nil {
+			return translateNotFound(err)
+		}
+		var active int64
+		if err := tx.Model(&domain.Scan{}).
+			Where("site_id = ? AND status IN ?", scan.SiteID, []string{domain.ScanStatusQueued, domain.ScanStatusRunning}).
+			Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrScanActive
+		}
+		return tx.Create(scan).Error
+	})
+}
+
+// ClaimNextScan atomically promotes the oldest queued scan to running. The
+// conditional update means multiple workers can poll safely; only one wins.
+func (s *Store) ClaimNextScan(ctx context.Context) (*domain.Scan, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		var scan domain.Scan
+		err := s.db.WithContext(ctx).
+			Where("status = ?", domain.ScanStatusQueued).
+			Order("id asc").First(&scan).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		now := time.Now()
+		result := s.db.WithContext(ctx).Model(&domain.Scan{}).
+			Where("id = ? AND status = ?", scan.ID, domain.ScanStatusQueued).
+			Updates(map[string]any{
+				"status":     domain.ScanStatusRunning,
+				"started_at": now,
+			})
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 1 {
+			scan.Status = domain.ScanStatusRunning
+			scan.StartedAt = &now
+			return &scan, nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *Store) SaveScanResult(ctx context.Context, input ScanSave) ([]domain.Finding, error) {

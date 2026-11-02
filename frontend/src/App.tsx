@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight, Globe2, LayoutDashboard, Plus, ShieldCheck, Sparkles, X } from 'lucide-react';
-import { api } from './api';
+import { api, waitForScan } from './api';
 import type { DashboardData, DashboardSite, SiteInput } from './types';
 import { Dashboard } from './Dashboard';
 import { SitePage } from './SitePage';
@@ -49,6 +49,14 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [error]);
 
+  useEffect(() => {
+    const hasActiveScan = dashboard?.sites.some((site) => site.latestScan?.status === 'queued' || site.latestScan?.status === 'running');
+    if (!hasActiveScan) return;
+    const timer = window.setInterval(() => void loadDashboard(false), 1500);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboard]);
+
   const navigate = (siteId: number | null) => {
     setSelectedSiteId(siteId);
     window.location.hash = siteId ? `#/sites/${siteId}` : '#/';
@@ -70,10 +78,12 @@ export default function App() {
     setScanningSiteId(site.id);
     setError('');
     try {
-      const result = await api.runScan(site.id);
+      const queued = await api.runScan(site.id);
       await loadDashboard(false);
-      if (result.scan.status === 'failed') {
-        setError(`扫描未完成：${result.scan.errorMessage || '目标网站无法访问'}`);
+      const detail = await waitForScan(queued.scan.id);
+      await loadDashboard(false);
+      if (detail.scan.status === 'failed') {
+        setError(`扫描未完成：${detail.scan.errorMessage || '目标网站无法访问'}`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '扫描失败');
@@ -125,7 +135,7 @@ export default function App() {
             <div className="space-y-1">
               {dashboard.sites.slice(0, 8).map((site) => (
                 <button key={site.id} onClick={() => navigate(site.id)} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition ${selectedSiteId === site.id ? 'bg-slate-100 font-semibold text-slate-900' : 'text-slate-600 hover:bg-slate-50'}`}>
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${site.latestScan?.status === 'failed' ? 'bg-rose-500' : site.latestScan?.status === 'completed' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${site.latestScan?.status === 'failed' ? 'bg-rose-500' : site.latestScan?.status === 'completed' ? 'bg-emerald-500' : site.latestScan?.status === 'queued' ? 'bg-amber-400' : site.latestScan?.status === 'running' ? 'bg-sky-500 animate-pulse' : 'bg-slate-300'}`} />
                   <span className="min-w-0 flex-1 truncate">{site.name}</span>
                   {site.latestScan?.status === 'completed' && <span className="text-[11px] font-semibold text-slate-400">{site.latestScan.score}</span>}
                 </button>
@@ -140,7 +150,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><ShieldCheck size={15} className="text-emerald-600" /> 轻量诊断引擎</div>
             <p className="mt-1.5 text-xs leading-5 text-slate-500">基于可验证的页面证据生成整改建议，问题状态会跨扫描保留。</p>
           </div>
-          <div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.3.0</div>
+          <div className="mt-4 text-[11px] text-slate-400">GeoPilot MVP · v0.4.0</div>
         </div>
       </aside>
 

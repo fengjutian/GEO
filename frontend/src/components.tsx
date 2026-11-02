@@ -20,12 +20,16 @@ export const issueStatusOptions = ['open', 'in_progress', 'resolved', 'ignored']
 
 export function scanStatusMeta(status: string): { label: string; badge: string; dot: string } {
   switch (status) {
+    case 'queued':
+      return { label: '排队中', badge: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400' };
     case 'completed':
       return { label: '已完成', badge: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' };
     case 'running':
       return { label: '扫描中', badge: 'bg-sky-50 text-sky-700', dot: 'bg-sky-500 animate-pulse' };
     case 'failed':
       return { label: '失败', badge: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' };
+    case 'cancelled':
+      return { label: '已取消', badge: 'bg-slate-100 text-slate-500', dot: 'bg-slate-400' };
     default:
       return { label: status || '未知', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' };
   }

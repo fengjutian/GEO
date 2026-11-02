@@ -53,6 +53,7 @@ func (s *Service) reportData(ctx context.Context, scanID uint) (corereport.Site,
 		CreatedAt:   site.CreatedAt,
 		UpdatedAt:   site.UpdatedAt,
 	}
+	startedAt := scan.StartedAt
 	reportScan := corereport.Scan{
 		ID:           scan.ID,
 		SiteID:       scan.SiteID,
@@ -67,7 +68,7 @@ func (s *Service) reportData(ctx context.Context, scanID uint) (corereport.Site,
 		RuleVersion:  scan.RuleVersion,
 		ScoreVersion: scan.ScoreVersion,
 		PageCount:    scan.PageCount,
-		StartedAt:    scan.StartedAt,
+		StartedAt:    startedAt,
 		FinishedAt:   scan.FinishedAt,
 		CreatedAt:    scan.CreatedAt,
 	}

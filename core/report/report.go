@@ -34,7 +34,7 @@ type Scan struct {
 	RuleVersion  string     `json:"ruleVersion"`
 	ScoreVersion string     `json:"scoreVersion"`
 	PageCount    int        `json:"pageCount"`
-	StartedAt    time.Time  `json:"startedAt"`
+	StartedAt    *time.Time `json:"startedAt"`
 	FinishedAt   *time.Time `json:"finishedAt"`
 	CreatedAt    time.Time  `json:"createdAt"`
 }
@@ -115,7 +115,11 @@ func RenderHTML(site Site, scan Scan, findings []Finding) string {
 	counts := CountBySeverity(findings)
 	finished := scan.FinishedAt
 	if finished == nil || finished.IsZero() {
-		finished = &scan.StartedAt
+		if scan.StartedAt != nil && !scan.StartedAt.IsZero() {
+			finished = scan.StartedAt
+		} else {
+			finished = &scan.CreatedAt
+		}
 	}
 	b.WriteString(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GeoPilot 诊断报告</title><style>
 :root{color-scheme:light}*{box-sizing:border-box}body{font:16px/1.65 "Segoe UI",system-ui,-apple-system,sans-serif;max-width:1040px;margin:40px auto;padding:0 24px;color:#172033;background:#fff}.muted{color:#64748b}.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:24px 0}.meta div{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px}.meta b{display:block;font-size:12px;color:#64748b;font-weight:600}.score{font-size:56px;font-weight:750;line-height:1}.hero{display:flex;gap:32px;align-items:center;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin:24px 0;background:#f8fafc}.counts{display:flex;gap:8px;flex-wrap:wrap}.count{border-radius:999px;padding:5px 10px;font-size:13px;font-weight:650;background:#f1f5f9}.finding{border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin:14px 0;break-inside:avoid}.finding h3{margin:6px 0 10px}.critical{color:#b91c1c}.high{color:#c2410c}.medium{color:#a16207}.low{color:#475569}.badge{display:inline-block;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;background:#f1f5f9}.evidence{background:#f8fafc;border-left:3px solid #cbd5e1;padding:10px 12px;overflow-wrap:anywhere}code{overflow-wrap:anywhere;font-size:13px}h1{letter-spacing:-.02em}h2{margin-top:36px}.boundary{font-size:13px;color:#64748b;border-top:1px solid #e2e8f0;margin-top:32px;padding-top:16px}@media print{body{margin:0;max-width:none}.finding{break-inside:avoid}}

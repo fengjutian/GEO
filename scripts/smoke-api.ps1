@@ -44,6 +44,19 @@ function Assert-True {
     Write-Host "  ok  $Message"
 }
 
+function Wait-Scan {
+    param([int]$ScanID, [int]$TimeoutSeconds = 90)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $detail = Invoke-ApiJson GET "/scans/$ScanID" $null
+        if ($detail.scan.status -in @('completed', 'failed', 'cancelled')) {
+            return $detail
+        }
+        Start-Sleep -Milliseconds 800
+    }
+    throw "ASSERTION FAILED: scan $ScanID did not finish in time"
+}
+
 $createdSite = $null
 $createdFailureSite = $null
 try {
@@ -58,7 +71,9 @@ try {
     }
     Assert-True ($createdSite.id -gt 0) 'site created'
 
-    $first = Invoke-ApiJson POST "/sites/$($createdSite.id)/scans" @{}
+    $firstQueued = Invoke-ApiJson POST "/sites/$($createdSite.id)/scans" @{}
+    Assert-True ($firstQueued.scan.status -in @('queued', 'running', 'completed')) 'scan job accepted'
+    $first = Wait-Scan -ScanID $firstQueued.scan.id
     Assert-True ($first.scan.status -eq 'completed') 'first scan completed'
     Assert-True ($first.findings.Count -gt 0) 'first scan produced findings'
     Assert-True (-not [string]::IsNullOrWhiteSpace($first.scan.finalUrl)) 'final URL persisted'
@@ -70,7 +85,8 @@ try {
     $updated = Invoke-ApiJson PATCH "/issues/$($issue.id)" @{ status = 'resolved'; note = 'smoke test' }
     Assert-True ($updated.status -eq 'resolved') 'issue marked resolved'
 
-    $second = Invoke-ApiJson POST "/sites/$($createdSite.id)/scans" @{}
+    $secondQueued = Invoke-ApiJson POST "/sites/$($createdSite.id)/scans" @{}
+    $second = Wait-Scan -ScanID $secondQueued.scan.id
     $reopened = $second.findings | Where-Object { $_.ruleCode -eq $issue.ruleCode } | Select-Object -First 1
     Assert-True ($reopened.status -eq 'open') 'recurring issue reopened automatically'
 
@@ -92,7 +108,8 @@ try {
             url         = $FailureTarget
             description = 'Failure-path smoke validation'
         }
-        $failure = Invoke-ApiJson POST "/sites/$($createdFailureSite.id)/scans" @{}
+        $failureQueued = Invoke-ApiJson POST "/sites/$($createdFailureSite.id)/scans" @{}
+        $failure = Wait-Scan -ScanID $failureQueued.scan.id
         Assert-True ($failure.scan.status -eq 'failed') 'failure target records failed status'
         Assert-True (-not [string]::IsNullOrWhiteSpace($failure.scan.errorCode)) 'failure code persisted'
     }

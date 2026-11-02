@@ -10,11 +10,11 @@ export type Site = {
 export type Scan = {
   id: number;
   siteId: number;
-  status: 'running' | 'completed' | 'failed' | string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
   targetUrl: string;
   finalUrl: string;
   httpStatus: number;
-  startedAt: string;
+  startedAt: string | null;
   finishedAt: string | null;
   pageCount: number;
   score: number;

@@ -83,9 +83,31 @@ export const api = {
   createSite: (input: SiteInput) => request<Site>('/sites', json('POST', input)),
   updateSite: (id: number, input: SiteInput) => request<Site>(`/sites/${id}`, json('PUT', input)),
   deleteSite: (id: number) => request<void>(`/sites/${id}`, { method: 'DELETE' }),
-  runScan: (id: number) => request<{ scan: Scan; findings: Finding[] }>(`/sites/${id}/scans`, { method: 'POST' }),
+  runScan: (id: number) => request<{ scan: Scan }>(`/sites/${id}/scans`, { method: 'POST' }),
   getSiteFindings: (id: number, filters: FindingFilters = {}) =>
     request<Finding[]>(`/sites/${id}/findings${queryString(filters)}`),
   getScan: (id: number) => request<ScanDetail>(`/scans/${id}`),
   updateIssue: (id: number, input: IssueInput) => request<Finding>(`/issues/${id}`, json('PATCH', input)),
 };
+
+export function isTerminalScanStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+export async function waitForScan(
+  scanId: number,
+  options: { timeoutMs?: number; intervalMs?: number; onStatus?: (scan: Scan) => void } = {},
+): Promise<ScanDetail> {
+  const timeoutMs = options.timeoutMs ?? 120000;
+  const intervalMs = options.intervalMs ?? 800;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await api.getScan(scanId);
+    options.onStatus?.(detail.scan);
+    if (isTerminalScanStatus(detail.scan.status)) {
+      return detail;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  }
+  throw new ApiError('扫描排队或执行时间过长，请稍后在扫描历史中查看结果。', 0, 'SCAN_TIMEOUT');
+}

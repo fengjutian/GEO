@@ -89,34 +89,45 @@ Base URL：`http://localhost:8080/api`
 
 ### `POST /api/sites/:id/scans`
 
-同步执行一次首页扫描。成功创建扫描记录后返回 `201`：
+创建一个异步扫描任务并立即返回 `202 Accepted`。响应头包含 `Location: /api/scans/{id}`：
 
 ```json
 {
   "scan": {
     "id": 13,
     "siteId": 1,
-    "status": "completed",
+    "status": "queued",
     "targetUrl": "https://example.com",
-    "finalUrl": "https://example.com/",
-    "httpStatus": 200,
-    "score": 78,
-    "summary": "完成首页诊断，共发现 6 项问题……",
-    "errorCode": "",
+    "finalUrl": "",
+    "httpStatus": 0,
+    "startedAt": null,
+    "finishedAt": null,
+    "score": 0,
+    "summary": "",
     "ruleVersion": "2026.11.1",
     "scoreVersion": "v1"
-  },
-  "findings": []
+  }
 }
 ```
 
-- 抓取失败时仍会创建记录，`status` 为 `failed`，`errorCode`/`errorMessage` 说明原因。
-- 同一网站 5 分钟内已有 `running` 扫描时返回 `409 SCAN_IN_PROGRESS`。
-- 服务启动时会把遗留的 `running` 扫描标记为失败，避免永久卡住。
+扫描由后台 worker 从队列领取并执行：
+
+```text
+queued -> running -> completed
+                  -> failed
+                  -> cancelled
+```
+
+调用方应轮询 `GET /api/scans/:id`，直到 `status` 为 `completed`、`failed` 或 `cancelled`。
+
+- 每个网站同一时间只允许一个 `queued` 或 `running` 任务；冲突返回 `409 SCAN_IN_PROGRESS`。
+- 抓取失败仍会生成记录，`status=failed`，`errorCode`/`errorMessage` 说明原因。
+- 服务启动时会把遗留的 `running` 扫描标记为失败；遗留 `queued` 任务会由 worker 继续领取。
+- 创建接口不再返回问题明细，问题通过扫描详情或 `findings` 接口获取。
 
 ### `GET /api/scans/:id`
 
-返回扫描、网站、该次扫描的问题、严重级别分布、状态分布，以及与此前最近一次成功扫描的对比：
+返回扫描、网站、该次扫描的问题、严重级别分布、状态分布，以及与此前最近一次成功扫描的对比。该接口同时用于轮询扫描进度：
 
 ```json
 {
@@ -220,6 +231,6 @@ Base URL：`http://localhost:8080/api`
 | --- | --- | --- |
 | 400 | `VALIDATION_ERROR` | 参数或状态非法 |
 | 404 | `RESOURCE_NOT_FOUND` | 网站/扫描/问题不存在 |
-| 409 | `SCAN_IN_PROGRESS` | 同一网站已有执行中的扫描 |
+| 409 | `SCAN_IN_PROGRESS` | 同一网站已有排队或执行中的扫描 |
 | 500 | `INTERNAL_ERROR` | 数据库或持久化失败 |
 | 503 | `SERVICE_UNAVAILABLE` | 数据库不可用（健康检查） |

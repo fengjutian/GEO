@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
@@ -22,15 +23,29 @@ import (
 	"github.com/fengjutian/GEO/backend/internal/httpapi"
 	"github.com/fengjutian/GEO/backend/internal/service"
 	"github.com/fengjutian/GEO/backend/internal/store"
+	"github.com/fengjutian/GEO/backend/internal/worker"
 )
 
 type stubScanner struct {
-	mu      sync.Mutex
-	results []corescan.Result
-	calls   int
+	mu          sync.Mutex
+	results     []corescan.Result
+	calls       int
+	block       chan struct{}
+	started     chan struct{}
+	startedOnce sync.Once
 }
 
-func (s *stubScanner) Scan(_ context.Context, _ string) corescan.Result {
+func (s *stubScanner) Scan(ctx context.Context, _ string) corescan.Result {
+	if s.started != nil {
+		s.startedOnce.Do(func() { close(s.started) })
+	}
+	if s.block != nil {
+		select {
+		case <-s.block:
+		case <-ctx.Done():
+			return corescan.Result{Status: corescan.StatusFailed, ErrorCode: "CANCELLED"}
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.results) == 0 {
@@ -70,7 +85,17 @@ func setupAPITest(t *testing.T) (*gorm.DB, *store.Store, *gin.Engine, *stubScann
 	scanner := &stubScanner{}
 	svc := service.New(st, scanner)
 	router := httpapi.NewRouter(svc, map[string]bool{"http://localhost:5173": true})
-	t.Cleanup(func() { _ = st.Close() })
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		worker.New(svc, st, 2, 10*time.Millisecond).Run(workerCtx)
+		close(workerDone)
+	}()
+	t.Cleanup(func() {
+		cancelWorker()
+		<-workerDone
+		_ = st.Close()
+	})
 	return gdb, st, router, scanner
 }
 
@@ -118,6 +143,35 @@ func newSite(t *testing.T, router http.Handler) domain.Site {
 	return decode[domain.Site](t, created)
 }
 
+func startScan(t *testing.T, router http.Handler, siteID uint) domain.Scan {
+	t.Helper()
+	created := request(t, router, http.MethodPost, fmt.Sprintf("/api/sites/%d/scans", siteID), nil)
+	if created.status != http.StatusAccepted {
+		t.Fatalf("start scan: %d %s", created.status, created.body)
+	}
+	return decode[struct {
+		Scan domain.Scan `json:"scan"`
+	}](t, created).Scan
+}
+
+func waitForScan(t *testing.T, router http.Handler, scanID uint) service.ScanDetail {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		result := request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d", scanID), nil)
+		if result.status != http.StatusOK {
+			t.Fatalf("poll scan %d: %d %s", scanID, result.status, result.body)
+		}
+		detail := decode[service.ScanDetail](t, result)
+		if domain.IsTerminalScanStatus(detail.Scan.Status) {
+			return detail
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("scan %d did not finish in time", scanID)
+	return service.ScanDetail{}
+}
+
 func TestAPISiteCRUDAndValidation(t *testing.T) {
 	_, _, router, _ := setupAPITest(t)
 
@@ -153,6 +207,35 @@ func TestAPISiteCRUDAndValidation(t *testing.T) {
 	}
 }
 
+func TestAPIRejectsDuplicateActiveScan(t *testing.T) {
+	_, _, router, scanner := setupAPITest(t)
+	site := newSite(t, router)
+	scanner.block = make(chan struct{})
+	scanner.started = make(chan struct{})
+
+	first := startScan(t, router, site.ID)
+	select {
+	case <-scanner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not claim the queued scan")
+	}
+
+	duplicate := request(t, router, http.MethodPost, fmt.Sprintf("/api/sites/%d/scans", site.ID), nil)
+	if duplicate.status != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate active scan, got %d %s", duplicate.status, duplicate.body)
+	}
+	var apiErr map[string]any
+	if err := json.Unmarshal(duplicate.body, &apiErr); err != nil || apiErr["code"] != "SCAN_IN_PROGRESS" {
+		t.Fatalf("unexpected duplicate error: %s", duplicate.body)
+	}
+
+	close(scanner.block)
+	detail := waitForScan(t, router, first.ID)
+	if !domain.IsTerminalScanStatus(detail.Scan.Status) {
+		t.Fatalf("scan did not reach a terminal state: %s", detail.Scan.Status)
+	}
+}
+
 func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 	gdb, _, router, scanner := setupAPITest(t)
 	scanner.results = []corescan.Result{
@@ -179,16 +262,13 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 	}
 	site := newSite(t, router)
 
-	first := request(t, router, http.MethodPost, fmt.Sprintf("/api/sites/%d/scans", site.ID), nil)
-	if first.status != http.StatusCreated {
-		t.Fatalf("first scan: %d %s", first.status, first.body)
+	firstScan := startScan(t, router, site.ID)
+	if firstScan.Status != domain.ScanStatusQueued {
+		t.Fatalf("new scan should be queued, got %s", firstScan.Status)
 	}
-	firstPayload := decode[struct {
-		Scan     domain.Scan      `json:"scan"`
-		Findings []domain.Finding `json:"findings"`
-	}](t, first)
-	if firstPayload.Scan.Status != domain.ScanStatusCompleted || len(firstPayload.Findings) != 2 {
-		t.Fatalf("unexpected first scan: %#v", firstPayload)
+	firstDetail := waitForScan(t, router, firstScan.ID)
+	if firstDetail.Scan.Status != domain.ScanStatusCompleted || len(firstDetail.Findings) != 2 {
+		t.Fatalf("unexpected first scan: %#v", firstDetail)
 	}
 
 	findings := decode[[]domain.Finding](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/sites/%d/findings", site.ID), nil))
@@ -214,16 +294,10 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 		t.Fatalf("expected one manual status event, got %d", events)
 	}
 
-	second := request(t, router, http.MethodPost, fmt.Sprintf("/api/sites/%d/scans", site.ID), nil)
-	if second.status != http.StatusCreated {
-		t.Fatalf("second scan: %d %s", second.status, second.body)
-	}
-	secondPayload := decode[struct {
-		Scan     domain.Scan      `json:"scan"`
-		Findings []domain.Finding `json:"findings"`
-	}](t, second)
+	secondScan := startScan(t, router, site.ID)
+	secondDetail := waitForScan(t, router, secondScan.ID)
 	var reopened domain.Finding
-	for _, finding := range secondPayload.Findings {
+	for _, finding := range secondDetail.Findings {
 		if finding.RuleCode == "RULE_B" {
 			reopened = finding
 		}
@@ -239,7 +313,7 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 		t.Fatalf("expected automatic reopen event, got %d events", events)
 	}
 
-	detail := decode[service.ScanDetail](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d", secondPayload.Scan.ID), nil))
+	detail := decode[service.ScanDetail](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d", secondScan.ID), nil))
 	if detail.Comparison.NewCount != 1 || detail.Comparison.PersistingCount != 1 || detail.Comparison.ResolvedCount != 1 {
 		t.Fatalf("unexpected comparison: %#v", detail.Comparison)
 	}
@@ -247,7 +321,7 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 		t.Fatalf("final URL / status missing: %#v", detail.Scan)
 	}
 
-	htmlReport := request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d/report", secondPayload.Scan.ID), nil)
+	htmlReport := request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d/report", secondScan.ID), nil)
 	if htmlReport.status != http.StatusOK {
 		t.Fatalf("html report: %d", htmlReport.status)
 	}
@@ -258,7 +332,7 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 		t.Fatal("html report is missing escaped content")
 	}
 
-	jsonReport := decode[map[string]any](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d/report.json", secondPayload.Scan.ID), nil))
+	jsonReport := decode[map[string]any](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/scans/%d/report.json", secondScan.ID), nil))
 	if jsonReport["formatVersion"] != "1.0" {
 		t.Fatalf("unexpected json report: %#v", jsonReport)
 	}
@@ -268,11 +342,10 @@ func TestAPIScanLifecycleComparisonAndReports(t *testing.T) {
 		t.Fatalf("unexpected dashboard stats: %#v", dashboard.Stats)
 	}
 
-	failed := request(t, router, http.MethodPost, fmt.Sprintf("/api/sites/%d/scans", site.ID), nil)
-	if failed.status != http.StatusCreated || decode[struct {
-		Scan domain.Scan `json:"scan"`
-	}](t, failed).Scan.Status != domain.ScanStatusFailed {
-		t.Fatalf("failed scan should still be recorded: %d %s", failed.status, failed.body)
+	failedScan := startScan(t, router, site.ID)
+	failedDetail := waitForScan(t, router, failedScan.ID)
+	if failedDetail.Scan.Status != domain.ScanStatusFailed || failedDetail.Scan.ErrorCode != "TLS_ERROR" {
+		t.Fatalf("failed scan should be recorded: %#v", failedDetail.Scan)
 	}
 	siteDetail := decode[service.SiteDetail](t, request(t, router, http.MethodGet, fmt.Sprintf("/api/sites/%d", site.ID), nil))
 	if len(siteDetail.Scans) != 3 || siteDetail.Scans[0].Status != domain.ScanStatusFailed {

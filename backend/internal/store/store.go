@@ -15,7 +15,10 @@ import (
 	"github.com/fengjutian/GEO/backend/internal/domain"
 )
 
-var ErrNotFound = errors.New("resource not found")
+var (
+	ErrNotFound   = errors.New("resource not found")
+	ErrScanActive = errors.New("site already has an active scan")
+)
 
 type Store struct {
 	db *gorm.DB

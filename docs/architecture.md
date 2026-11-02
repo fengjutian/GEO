@@ -12,7 +12,8 @@
 │  ├─ internal/config         │
 │  ├─ internal/httpapi        │  路由、中间件、请求/响应、错误映射
 │  ├─ internal/service        │  用例编排、问题生命周期、事务边界
-│  ├─ internal/store          │  GORM/MySQL 仓储、迁移、回填
+│  ├─ internal/store          │  GORM/MySQL 仓储、迁移、回填、任务领取
+│  ├─ internal/worker         │  队列轮询、并发执行、异常恢复
 │  └─ internal/domain         │  持久化模型、状态、指纹、版本
 └───────┬─────────────────────┘
         │ Go module dependency
@@ -31,6 +32,7 @@
 | `domain` | Go 标准库 | 其他业务层 |
 | `store` | 标准库、GORM、`domain` | `core`、HTTP、Gin |
 | `service` | 标准库、`core`、`domain`、`store` | Gin、HTTP |
+| `worker` | 标准库、`service`、`store` | Gin、HTTP |
 | `httpapi` | 标准库、Gin、`service` | GORM、直接 SQL |
 | `cmd/server` | 所有内部包、配置 | 业务实现 |
 
@@ -46,12 +48,25 @@ type Scanner interface {
 }
 ```
 
-默认实现是 `core/scan.Engine`。后续可以替换为：
+默认实现是 `core/scan.Engine`。当前由 `internal/worker` 从数据库队列领取 `queued` 扫描后调用；后续可以替换为：
 
-- 数据库任务队列的 worker
 - Playwright/Chromium 渲染器
 - 远程扫描服务客户端
 - 多地域探测聚合器
+
+### 异步任务
+
+```text
+POST /scans -> scans(status=queued)
+worker      -> ClaimNextScan (conditional update queued -> running)
+worker      -> scanner.Scan
+worker      -> 事务写入 scan + findings + issue_events
+frontend    -> GET /scans/:id 轮询直到终态
+```
+
+- 同一网站同一时间只允许一个 `queued`/`running` 任务，入队时通过站点行锁避免并发重复入队。
+- 服务启动时遗留 `running` 标记失败；`queued` 任务继续被处理。
+- 当前 worker 与 API 同进程部署，并发数 2；多进程部署需要引入任务租约/心跳，不能依赖启动时清理。
 
 ### 规则
 

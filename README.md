@@ -22,7 +22,7 @@ GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，�
 
 - 网站项目创建、列表、编辑、详情与删除
 - 工作台统计：网站数、累计扫描、待处理问题、最近扫描与站点状态
-- 同步首页扫描，并持久化成功/失败状态、错误代码与规则版本
+- 异步首页扫描：`queued → running → completed/failed`，后台 worker 执行并持久化状态
 - 诊断规则：HTTP 状态、Content-Type、Title、Meta Description、Canonical、robots.txt、sitemap.xml、JSON-LD Schema、H1 结构、可读正文、内容大小
 - 问题生命周期：首次/最近发现时间、证据、整改建议、扣分值与状态（待处理/处理中/已修复/已忽略）
 - 重新扫描时继承问题状态；已修复问题再次出现会自动重新打开并记录事件
@@ -167,7 +167,8 @@ backend/
   cmd/server/                应用入口与优雅退出
   internal/config/           环境变量与 .env
   internal/domain/           Site / Scan / Finding / IssueEvent
-  internal/store/            MySQL 持久化、迁移、回填
+  internal/store/            MySQL 持久化、迁移、回填、任务领取
+  internal/worker/           队列轮询、并发执行、异常恢复
   internal/service/          扫描编排、问题生命周期、工作台、报告
   internal/httpapi/          路由、中间件、请求/响应
   internal/httpapi/api_test.go  MySQL 端到端测试
@@ -193,6 +194,6 @@ go.work                      后端与 core 模块工作区
 
 - 扫描器会访问用户填写的 URL。即使已包含应用层 SSRF 防护，生产环境仍应通过网络出口策略阻断内网与云元数据地址。
 - 当前版本没有登录认证、租户隔离、请求限流与审计日志，**不应直接暴露到公网**。
-- 扫描为同步执行，单次只抓取首页，不执行 JavaScript；大页面会被截断到 2 MiB 后分析。
+- 扫描通过数据库队列 + 进程内 worker 执行，前端轮询结果；单次只抓取首页，不执行 JavaScript；大页面会被截断到 2 MiB 后分析。
 - 规则评分仅用于同一产品内比较，不代表任何 AI 搜索平台的官方评分。
 - GEO 诊断不保证网站一定被任何 AI 搜索平台收录或引用。

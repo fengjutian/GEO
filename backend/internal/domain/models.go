@@ -3,15 +3,21 @@ package domain
 import "time"
 
 const (
+	ScanStatusQueued    = "queued"
 	ScanStatusRunning   = "running"
 	ScanStatusCompleted = "completed"
 	ScanStatusFailed    = "failed"
+	ScanStatusCancelled = "cancelled"
 
 	IssueStatusOpen       = "open"
 	IssueStatusInProgress = "in_progress"
 	IssueStatusResolved   = "resolved"
 	IssueStatusIgnored    = "ignored"
 )
+
+func IsTerminalScanStatus(status string) bool {
+	return status == ScanStatusCompleted || status == ScanStatusFailed || status == ScanStatusCancelled
+}
 
 func IsActiveIssueStatus(status string) bool {
 	return status == IssueStatusOpen || status == IssueStatusInProgress
@@ -33,7 +39,7 @@ type Scan struct {
 	TargetURL    string     `json:"targetUrl" gorm:"size:2048"`
 	FinalURL     string     `json:"finalUrl" gorm:"size:2048"`
 	HTTPStatus   int        `json:"httpStatus"`
-	StartedAt    time.Time  `json:"startedAt"`
+	StartedAt    *time.Time `json:"startedAt"`
 	FinishedAt   *time.Time `json:"finishedAt"`
 	PageCount    int        `json:"pageCount"`
 	Score        int        `json:"score"`

@@ -19,7 +19,7 @@ import {
   Trash2,
   Wrench,
 } from 'lucide-react';
-import { api, reportJsonUrl, reportUrl } from './api';
+import { api, reportJsonUrl, reportUrl, waitForScan } from './api';
 import type { Finding, Scan, ScanDetail, Site, SiteDetail, SiteInput } from './types';
 import {
   EmptyState,
@@ -116,6 +116,15 @@ export function SitePage({
     return () => window.clearInterval(timer);
   }, [scanStartedAt]);
 
+  const latestScan = detail?.scans[0];
+  const latestStatus = latestScan?.status;
+  useEffect(() => {
+    if (latestStatus !== 'queued' && latestStatus !== 'running') return;
+    const timer = window.setInterval(() => void loadAll(false), 1500);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestStatus, siteId]);
+
   const latestCompleted = detail?.scans.find((scan) => scan.status === 'completed');
   const activeFindings = findings.filter((finding) => finding.status === 'open' || finding.status === 'in_progress');
   const highPriority = activeFindings.filter((finding) => finding.severity === 'critical' || finding.severity === 'high');
@@ -131,13 +140,15 @@ export function SitePage({
     setScanning(true);
     setScanStartedAt(Date.now());
     try {
-      const result = await api.runScan(siteId);
+      const queued = await api.runScan(siteId);
+      await loadAll(false);
+      const detail = await waitForScan(queued.scan.id);
       setScanStartedAt(null);
       await loadAll(false);
       setTab('overview');
       onChanged();
-      if (result.scan.status === 'failed') {
-        onError(`扫描未完成：${result.scan.errorMessage || '目标网站无法访问'}`);
+      if (detail.scan.status === 'failed') {
+        onError(`扫描未完成：${detail.scan.errorMessage || '目标网站无法访问'}`);
       }
     } catch (error) {
       setScanStartedAt(null);
@@ -220,6 +231,7 @@ export function SitePage({
   }
 
   const { site, scans } = detail;
+  const scanInProgress = scanning || latestStatus === 'queued' || latestStatus === 'running';
 
   return (
     <>
@@ -248,9 +260,9 @@ export function SitePage({
           <button onClick={() => setEditing(true)} className="btn btn-secondary">
             <Pencil size={15} /> 编辑
           </button>
-          <button onClick={runScan} disabled={scanning} className="btn btn-primary">
-            {scanning ? <RefreshCw size={15} className="animate-spin" /> : <Activity size={15} />}
-            {scanning ? `扫描中${elapsed ? ` ${elapsed}s` : ''}` : '运行诊断'}
+          <button onClick={runScan} disabled={scanInProgress} className="btn btn-primary">
+            {scanInProgress ? <RefreshCw size={15} className="animate-spin" /> : <Activity size={15} />}
+            {scanInProgress ? (latestStatus === 'queued' ? '排队中' : `扫描中${elapsed ? ` ${elapsed}s` : ''}`) : '运行诊断'}
           </button>
           <button onClick={deleteSite} disabled={deleting} className="rounded-lg border border-slate-200 p-2.5 text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600" title="删除网站">
             {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
@@ -258,12 +270,14 @@ export function SitePage({
         </div>
       </div>
 
-      {scanning && (
+      {scanInProgress && (
         <div className="mb-5 flex items-center gap-3 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
           <Loader2 size={17} className="animate-spin" />
           <div>
-            <div className="font-semibold">正在抓取并分析首页</div>
-            <div className="mt-0.5 text-xs text-sky-600">已用时 {elapsed}s。扫描包含首页、robots.txt 与 sitemap.xml，通常需要数秒。</div>
+            <div className="font-semibold">{latestStatus === 'queued' ? '扫描已提交，等待执行' : '正在抓取并分析首页'}</div>
+            <div className="mt-0.5 text-xs text-sky-600">
+              {scanning && elapsed ? `已用时 ${elapsed}s。` : ''}后台任务会自动刷新结果；扫描包含首页、robots.txt 与 sitemap.xml。
+            </div>
           </div>
         </div>
       )}
@@ -294,7 +308,7 @@ export function SitePage({
           findings={findings}
           highPriority={highPriority}
           statusCounts={statusCounts}
-          scanning={scanning}
+          scanning={scanInProgress}
           onRunScan={runScan}
           onOpenIssues={() => setTab('issues')}
           onOpenScan={openScan}
@@ -308,12 +322,12 @@ export function SitePage({
           updating={issueUpdating}
           onUpdate={updateIssue}
           onRunScan={runScan}
-          scanning={scanning}
+          scanning={scanInProgress}
         />
       )}
 
       {tab === 'history' && (
-        <HistoryPanel scans={scans} onOpenScan={openScan} onRunScan={runScan} scanning={scanning} />
+        <HistoryPanel scans={scans} onOpenScan={openScan} onRunScan={runScan} scanning={scanInProgress} />
       )}
 
       {editing && (
@@ -389,7 +403,7 @@ function Overview({
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="font-bold text-slate-900">最近扫描</h2>
-              <p className="mt-1 text-xs text-slate-500">扫描 #{latest.id} · {formatDate(latest.finishedAt || latest.startedAt)}</p>
+              <p className="mt-1 text-xs text-slate-500">扫描 #{latest.id} · {formatDate(latest.finishedAt || latest.startedAt || latest.createdAt)}</p>
             </div>
             <div className="flex items-center gap-2">
               <ScanStatusBadge status={latest.status} />
@@ -427,9 +441,13 @@ function Overview({
                 </div>
               )}
             </>
-          ) : (
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+          ) : latest.status === 'failed' ? (
+            <div className="mt-5 rounded-xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">
               {latest.errorMessage || '该次扫描未产生可用结果，请重新运行诊断。'}
+            </div>
+          ) : (
+            <div className="mt-5 rounded-xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-700">
+              {latest.status === 'queued' ? '扫描正在排队，完成后会自动刷新结果。' : '扫描正在执行，完成后会自动刷新结果。'}
             </div>
           )}
         </section>
@@ -503,7 +521,7 @@ function Overview({
                 <button key={scan.id} onClick={() => onOpenScan(scan)} className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-slate-50">
                   <div>
                     <div className="text-sm font-semibold text-slate-700">扫描 #{scan.id}</div>
-                    <div className="mt-0.5 text-xs text-slate-400">{formatDate(scan.finishedAt || scan.startedAt)}</div>
+                    <div className="mt-0.5 text-xs text-slate-400">{formatDate(scan.finishedAt || scan.startedAt || scan.createdAt)}</div>
                   </div>
                   <div className="flex items-center gap-2">
                     {delta !== null && delta !== 0 && (
@@ -694,7 +712,7 @@ function HistoryPanel({ scans, onOpenScan, onRunScan, scanning }: { scans: Scan[
             {scans.map((scan) => (
               <tr key={scan.id} className="table-row hover:bg-slate-50/70">
                 <td className="px-5 py-4 font-semibold text-slate-800">#{scan.id}</td>
-                <td className="px-5 py-4 text-xs text-slate-500">{formatDate(scan.finishedAt || scan.startedAt)}</td>
+                <td className="px-5 py-4 text-xs text-slate-500">{formatDate(scan.finishedAt || scan.startedAt || scan.createdAt)}</td>
                 <td className="px-5 py-4">{scan.status === 'completed' ? <span className="font-bold text-slate-800">{scan.score}<span className="text-[10px] font-normal text-slate-400">/100</span></span> : <span className="text-slate-400">—</span>}</td>
                 <td className="px-5 py-4 text-xs text-slate-500">
                   {scan.status === 'completed' ? <>{scan.issueCount} 项{scan.highIssueCount > 0 && <span className="ml-1 text-rose-500">（高 {scan.highIssueCount}）</span>}</> : scan.errorMessage ? <span className="line-clamp-1 block max-w-[220px] truncate text-rose-500">{scan.errorMessage}</span> : '—'}
@@ -734,7 +752,7 @@ function ScanDetailModal({
   onUpdate: (finding: Finding, status: string) => void;
 }) {
   return (
-    <Modal title={data ? `扫描 #${data.scan.id}` : '扫描详情'} subtitle={data ? `${data.site.name} · ${formatDate(data.scan.finishedAt || data.scan.startedAt)}` : '正在加载扫描结果…'} onClose={onClose} wide>
+    <Modal title={data ? `扫描 #${data.scan.id}` : '扫描详情'} subtitle={data ? `${data.site.name} · ${formatDate(data.scan.finishedAt || data.scan.startedAt || data.scan.createdAt)}` : '正在加载扫描结果…'} onClose={onClose} wide>
       {loading || !data ? (
         <div className="space-y-3 p-6">
           {[0, 1, 2].map((item) => <div key={item} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}
@@ -743,7 +761,7 @@ function ScanDetailModal({
         <div className="space-y-5 p-6">
           {data.scan.status === 'failed' ? (
             <ScanFailureNote scan={data.scan} />
-          ) : (
+          ) : data.scan.status === 'completed' ? (
             <div className="flex flex-col gap-5 rounded-2xl bg-slate-50 p-5 sm:flex-row sm:items-center">
               <ScoreRing score={data.scan.score} size={84} />
               <div className="min-w-0 flex-1">
@@ -763,6 +781,14 @@ function ScanDetailModal({
                   <a href={reportUrl(data.scan.id)} target="_blank" rel="noreferrer" className="btn btn-secondary !px-3 !py-2"><FileText size={14} /> HTML 报告</a>
                   <a href={reportJsonUrl(data.scan.id)} className="btn btn-secondary !px-3 !py-2"><FileJson size={14} /> JSON 导出</a>
                 </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50 p-5 text-sm text-sky-800">
+              <Loader2 size={18} className="animate-spin" />
+              <div>
+                <div className="font-semibold">{data.scan.status === 'queued' ? '扫描已排队，等待执行' : '扫描正在执行'}</div>
+                <div className="mt-1 text-xs text-sky-600">关闭后可在扫描历史中查看最终结果。</div>
               </div>
             </div>
           )}

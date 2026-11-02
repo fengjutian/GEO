@@ -11,29 +11,52 @@ import (
 	"github.com/fengjutian/GEO/backend/internal/store"
 )
 
-func (s *Service) RunScan(ctx context.Context, siteID uint) (domain.Scan, []domain.Finding, error) {
+// EnqueueScan creates a durable queued job. The worker owns execution; the
+// API returns as soon as the job is safely persisted.
+func (s *Service) EnqueueScan(ctx context.Context, siteID uint) (domain.Scan, error) {
 	site, err := s.store.GetSite(ctx, siteID)
 	if err != nil {
-		return domain.Scan{}, nil, mapStoreError("网站不存在", err)
+		return domain.Scan{}, mapStoreError("网站不存在", err)
 	}
-	running, err := s.store.CountRunningScans(ctx, site.ID, time.Now().Add(-5*time.Minute))
-	if err != nil {
-		return domain.Scan{}, nil, internal("无法检查扫描状态", err)
-	}
-	if running > 0 {
-		return domain.Scan{}, nil, conflict("SCAN_IN_PROGRESS", "该网站已有扫描正在执行，请稍后重试")
-	}
-
 	scan := domain.Scan{
 		SiteID:       site.ID,
-		Status:       domain.ScanStatusRunning,
+		Status:       domain.ScanStatusQueued,
 		TargetURL:    site.URL,
-		StartedAt:    time.Now(),
 		RuleVersion:  domain.RuleVersion,
 		ScoreVersion: domain.ScoreVersion,
 	}
-	if err := s.store.CreateScan(ctx, &scan); err != nil {
-		return domain.Scan{}, nil, internal("无法创建扫描任务", err)
+	if err := s.store.CreateScanIfIdle(ctx, &scan); err != nil {
+		switch {
+		case errors.Is(err, store.ErrScanActive):
+			return domain.Scan{}, conflict("SCAN_IN_PROGRESS", "该网站已有扫描正在排队或执行，请稍后重试")
+		case errors.Is(err, store.ErrNotFound):
+			return domain.Scan{}, notFound("网站不存在")
+		default:
+			return domain.Scan{}, internal("无法创建扫描任务", err)
+		}
+	}
+	return scan, nil
+}
+
+// ProcessScan executes a scan already claimed by a worker (status=running).
+// Persistence uses a short independent context so a shutting-down worker can
+// still record the final state instead of leaving the job stuck.
+func (s *Service) ProcessScan(ctx context.Context, scanID uint) error {
+	scan, err := s.store.GetScan(ctx, scanID)
+	if err != nil {
+		return mapStoreError("扫描记录不存在", err)
+	}
+	if scan.Status != domain.ScanStatusRunning {
+		if domain.IsTerminalScanStatus(scan.Status) {
+			return nil
+		}
+		return internal("扫描任务状态不允许执行", nil)
+	}
+	site, err := s.store.GetSite(ctx, scan.SiteID)
+	if err != nil {
+		finished := time.Now()
+		_ = s.store.MarkScanFailed(context.Background(), scan.ID, "SITE_NOT_FOUND", "扫描关联的网站不存在", finished)
+		return mapStoreError("扫描关联的网站不存在", err)
 	}
 
 	result := s.scanner.Scan(ctx, site.URL)
@@ -53,17 +76,18 @@ func (s *Service) RunScan(ctx context.Context, siteID uint) (domain.Scan, []doma
 		scan.PageCount = 1
 	}
 
-	findings, reopened, err := s.buildFindings(ctx, site, scan.ID, result.Findings, finished)
+	persistCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	findings, reopened, err := s.buildFindings(persistCtx, site, scan.ID, result.Findings, finished)
 	if err != nil {
-		_ = s.store.MarkScanFailed(ctx, scan.ID, "PERSIST_FAILED", "扫描结果保存失败", finished)
-		return domain.Scan{}, nil, internal("扫描已完成，但结果保存失败", err)
+		_ = s.store.MarkScanFailed(persistCtx, scan.ID, "PERSIST_FAILED", "扫描结果保存失败", finished)
+		return internal("扫描已完成，但结果保存失败", err)
 	}
-	saved, err := s.store.SaveScanResult(ctx, store.ScanSave{Scan: &scan, Findings: findings, Reopened: reopened})
-	if err != nil {
-		_ = s.store.MarkScanFailed(ctx, scan.ID, "PERSIST_FAILED", "扫描结果保存失败", finished)
-		return domain.Scan{}, nil, internal("扫描已完成，但结果保存失败", err)
+	if _, err := s.store.SaveScanResult(persistCtx, store.ScanSave{Scan: &scan, Findings: findings, Reopened: reopened}); err != nil {
+		_ = s.store.MarkScanFailed(persistCtx, scan.ID, "PERSIST_FAILED", "扫描结果保存失败", finished)
+		return internal("扫描已完成，但结果保存失败", err)
 	}
-	return scan, saved, nil
+	return nil
 }
 
 func (s *Service) buildFindings(ctx context.Context, site domain.Site, scanID uint, items []corescan.Finding, now time.Time) ([]domain.Finding, map[string]string, error) {

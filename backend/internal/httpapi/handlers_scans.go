@@ -15,12 +15,13 @@ func (a *API) handleCreateScan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	scan, findings, err := a.service.RunScan(c.Request.Context(), id)
+	scan, err := a.service.EnqueueScan(c.Request.Context(), id)
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"scan": scan, "findings": findings})
+	c.Header("Location", "/api/scans/"+strconv.FormatUint(uint64(scan.ID), 10))
+	c.JSON(http.StatusAccepted, gin.H{"scan": scan})
 }
 
 func (a *API) handleGetScan(c *gin.Context) {
