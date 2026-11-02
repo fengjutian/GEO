@@ -42,8 +42,8 @@ powershell -File scripts/smoke-api.ps1 `
 | F-04 | 问题状态更新与事件 | 通过 | `CANONICAL_MISSING` 由 `open` 更新为 `resolved`，`issue_events` 新增 1 条 |
 | F-05 | 已修复问题再次出现 | 通过 | 第二次扫描后自动重开为 `open`，`firstSeenAt` 保留，新增 1 条自动重开事件 |
 | F-06 | 扫描历史差异对比 | 通过 | 第二次扫描对比第一次：`new=0 / persisting=7 / resolved=0`；集成测试另覆盖 `1/1/1` 场景 |
-| F-07 | HTML / JSON 报告 | 通过 | HTML 5967 字节，JSON `formatVersion=1.0`、7 条问题；转义测试通过 |
-| F-08 | 工作台统计 | 通过 | 2 个网站、3 次扫描、7 个待处理问题、平均分 42，与数据库一致 |
+| F-07 | HTML / JSON 报告 | 通过 | HTML 报告可访问，JSON `formatVersion=1.0`；报告转义测试通过 |
+| F-08 | 工作台统计 | 通过 | 冒烟脚本验证站点、扫描活动与待处理问题统计可正常返回；集成测试校验具体数值 |
 | F-09 | SSRF 与目标安全 | 通过 | 核心单元测试覆盖 localhost、私网、元数据、IPv4 映射、非 80/443 端口、重定向校验 |
 | F-10 | 前端关键路径 | 通过 | `npm run build` 通过；Chrome Headless 验证扫描提交后的 `排队中`、轮询刷新到 `已完成`、问题中心与报告入口 |
 | F-11 | 异步扫描队列 | 通过 | 集成测试覆盖 `202 → queued → running → terminal`；同站点入队冲突返回 `409`；启动清理逻辑已实现，真实进程重启恢复尚未做自动化验证 |
