@@ -65,9 +65,11 @@ internal/httpapi    路由、中间件、请求解析与错误映射
 | 后端格式与构建 | `cd backend && go build ./... && go vet ./...` | 通过 |
 | 后端测试 | `cd backend && go test ./...` | 通过（数据库测试自动跳过） |
 | MySQL API 集成测试 | `TEST_DB_DSN=... go test -run TestAPI -v ./internal/httpapi` | 通过（MySQL 8.0.46） |
+| 一键验证 | `scripts/verify.ps1 -Integration` | 通过 |
 | 前端类型检查与构建 | `cd frontend && npm run build` | 通过 |
+| 功能验证 | F-01 至 F-10 | 通过，详见 [功能验证报告](functional-validation-report.md) |
 | 真实站点扫描 | `POST /api/sites/:id/scans`，目标 `https://example.org` | 成功，7 项问题，评分 42 |
-| TLS 失败场景 | 目标 `https://expired.badssl.com` | 状态 `failed`，`TLS_ERROR` 持久化正确 |
+| 失败场景 | 目标 `https://expired.badssl.com` | 状态 `failed`，`FETCH_TIMEOUT` 持久化正确 |
 | 状态生命周期 | 标记 `resolved` 后再次扫描 | 自动重开并生成事件 |
 | 报告转义 | 问题标题含 `<script>` | HTML 报告正确转义 |
 
@@ -76,6 +78,8 @@ internal/httpapi    路由、中间件、请求解析与错误映射
 ## 当前阶段决策
 
 **暂不开发登录，优先验证功能。** 详见 [开发规范](development-guidelines.md)。
+
+F-01 至 F-10 已于 2026-11-02 完成一轮验证，结果见 [功能验证报告](functional-validation-report.md)，未发现阻塞性缺陷。
 
 当前重点：
 

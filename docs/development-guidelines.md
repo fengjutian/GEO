@@ -83,6 +83,16 @@
 ### 5.2 命令
 
 ```bash
+# 一键验证（格式、vet、测试、前端构建）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Integration
+
+# API 已启动时的真实 HTTP 冒烟验证
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-api.ps1 `
+  -ApiBase http://127.0.0.1:8080/api `
+  -Target https://example.org `
+  -FailureTarget https://expired.badssl.com
+
 # 两模块一起测试
 go test ./core/... ./backend/...
 

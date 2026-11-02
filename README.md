@@ -12,6 +12,7 @@ GeoPilot 是一个轻量级 GEO（生成式引擎优化）网站诊断工具，�
 - [数据库设计与 REST API 接口规范 V1.0](docs/database-and-rest-api-spec-v1.0.md)
 - [数据库迁移 SQL 与 OpenAPI 3.1 完整接口定义 V1.0](docs/database-migration-and-openapi-v1.0.md)
 - [开发进度与验证记录](docs/development-status.md)
+- [功能验证报告](docs/functional-validation-report.md)
 - [开发规范](docs/development-guidelines.md)
 - [架构说明](docs/architecture.md)
 - [核心模块说明](core/README.md)
@@ -92,7 +93,18 @@ npm run build
 
 ## 测试
 
-在仓库根目录可一次运行两个模块：
+仓库提供一键验证脚本（包含格式、vet、测试和前端构建）：
+
+```bash
+# Windows
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Integration
+
+# macOS / Linux / Git Bash
+./scripts/verify.sh
+```
+
+在仓库根目录也可一次运行两个模块：
 
 ```bash
 go test ./core/... ./backend/...
@@ -123,6 +135,15 @@ go test -run TestAPI -v ./internal/httpapi
 ```bash
 # bash
 TEST_DB_DSN='geopilot:change_me_geopilot@tcp(127.0.0.1:3306)/geopilot_test?charset=utf8mb4&parseTime=True&loc=Local' go test -run TestAPI -v ./internal/httpapi
+```
+
+真实 API 冒烟验证（需要已启动 API，且数据库为可清理的测试库）：
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-api.ps1 `
+  -ApiBase http://127.0.0.1:8080/api `
+  -Target https://example.org `
+  -FailureTarget https://expired.badssl.com
 ```
 
 前端类型检查与构建：
